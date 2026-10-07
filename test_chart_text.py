@@ -34,15 +34,16 @@ def pipeline(img):
     legend = {e.role: e for e in ct.read_legend(img, lay)}
     area = dg.default_search_area(lay, img.shape[1], img.shape[0])
     cands = dg.colour_candidates(img, area)
-    others = [c.rgb for c in cands]
+    others = [sh for c in cands for sh in c.shades]
     last = x.used[-1].value
     lo, hi = y.used[0], y.used[-1]
     cal = dg.Calibration(lo.pos, float(y.value(lo.pos)), hi.pos, float(y.value(hi.pos)),
                          float(x.pos(0)), T0, float(x.pos(last)), T0 + timedelta(hours=last))
     series = {}
     for role, label in (('ambient', 'Ambient temperature'), ('meat', 'Meat temperature')):
-        c = min(cands, key=lambda c: dist(c.rgb, legend[role].rgb))
-        series[label] = dg.series_in_units(dg.trace_line(img, area, c.rgb, lay.background, others=others), cal)
+        c = min(cands, key=lambda c: min(dist(sh, legend[role].rgb) for sh in c.shades))
+        series[label] = dg.series_in_units(dg.trace_line(img, area, c.rgb, lay.background, others=others,
+                                                         shades=c.variants), cal)
     return dg.build_table(series, cal, 60, anchor=T0, not_before=T0)
 
 
@@ -86,14 +87,29 @@ class ProbeAppChart(unittest.TestCase):
     def test_pale_ambient_found_and_target_flat(self):
         area = dg.default_search_area(self.lay, self.img.shape[1], self.img.shape[0])
         cands = dg.colour_candidates(self.img, area)
-        others = [c.rgb for c in cands]
+        others = [sh for c in cands for sh in c.shades]
         found = {}
         for name, rgb in (('ambient', AMBIENT_RGB), ('internal', INTERNAL_RGB), ('target', TARGET_RGB)):
             c = min(cands, key=lambda c: dist(c.rgb, rgb))
             self.assertLess(dist(c.rgb, rgb), 40, name)
-            found[name] = dg.is_flat(dg.trace_line(self.img, area, c.rgb, self.lay.background, others=others),
-                                     area.bottom - area.top)
+            found[name] = dg.is_flat(dg.trace_line(self.img, area, c.rgb, self.lay.background, others=others,
+                                                   shades=c.variants), area.bottom - area.top)
         self.assertEqual(found, {'ambient': False, 'internal': False, 'target': True})
+
+    def test_ambient_shaded_part_is_one_line(self):
+        """Inside the translucent shading under the meat line the ambient line looks a
+        different colour; it must still be traced as the same line, to the end of the cook."""
+        area = dg.default_search_area(self.lay, self.img.shape[1], self.img.shape[0])
+        cands = dg.colour_candidates(self.img, area)
+        amb = min(cands, key=lambda c: dist(c.rgb, AMBIENT_RGB))
+        self.assertGreaterEqual(len(amb.variants), 1, 'the tinted shade is joined to the ambient line')
+        self.assertEqual(sum(min(dist(sh, AMBIENT_RGB) for sh in c.shades) < 40 for c in cands), 1)
+        tr = dg.trace_line(self.img, area, amb.rgb, self.lay.background,
+                           others=[sh for c in cands for sh in c.shades], shades=amb.variants)
+        h = self.ex.hours(tr.x[~np.isnan(tr.y)])
+        self.assertLess(h.min(), 0.1)
+        self.assertGreater(h.max(), PROBE_END - 0.1)
+        self.assertGreater(tr.columns_found, 0.97)
 
     def check_table(self, img):
         df = pipeline(img)
@@ -109,6 +125,7 @@ class ProbeAppChart(unittest.TestCase):
             calm = ~np.isnan(v) & (h < PROBE_END - 0.1) & (np.abs(fn(h + 0.05) - fn(h - 0.05)) <= 1.5)
             err = np.abs(v[calm] - fn(h[calm]))
             self.assertGreater(calm.sum(), 900)
+            self.assertGreater(np.isfinite(v[h > 12]).mean(), 0.97, col + ': values after the 10 h drop')
             self.assertLess(float(err.mean()), 0.3, col)
             self.assertLess(float(np.percentile(err, 95)), 0.8, col)
 

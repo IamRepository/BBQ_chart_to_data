@@ -81,8 +81,8 @@ def find_colours(digest: str, _img, area: tuple):
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def trace(digest: str, _img, area: tuple, rgb: tuple, bg: tuple, tolerance: float, bridge: int, edge: str,
-          others: tuple = ()):
-    return dg.trace_line(_img, dg.PlotArea(*area), rgb, np.array(bg), tolerance, bridge, edge, others)
+          others: tuple = (), shades: tuple = ()):
+    return dg.trace_line(_img, dg.PlotArea(*area), rgb, np.array(bg), tolerance, bridge, edge, others, shades)
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -386,18 +386,18 @@ with right:
     # legend colours: match each to a line colour; add it if no line colour is close
     role_of_cand = {}
     for entry in legend:
-        dists = [sum((a - b) ** 2 for a, b in zip(c.rgb, entry.rgb)) ** .5 for c in cands]
+        dists = [min(sum((a - b) ** 2 for a, b in zip(sh, entry.rgb)) ** .5 for sh in c.shades) for c in cands]
         if dists and min(dists) < 90:
             role_of_cand.setdefault(int(np.argmin(dists)), entry)
         elif entry.role != 'target':
             cands.append(dg.ColourCandidate(entry.rgb, 0, 0.0))
             role_of_cand[len(cands) - 1] = entry
-    others = tuple(tuple(int(v) for v in c.rgb) for c in cands)
+    others = tuple(tuple(int(v) for v in sh) for c in cands for sh in c.shades)
     flat = {}
     medians = {}
     pre = {}
     for i, c in enumerate(cands):
-        tr = pre[i] = trace(digest, img, area_t, c.rgb, bg, 70.0, 25, 'centre', others)
+        tr = pre[i] = trace(digest, img, area_t, c.rgb, bg, 70.0, 25, 'centre', others, c.variants)
         flat[i] = dg.is_flat(tr, area.bottom - area.top)
         medians[i] = np.nanmedian(tr.y) if np.isfinite(tr.y).any() else np.inf
 
@@ -405,6 +405,8 @@ with right:
         bits = [f'Colour {i + 1}: {dg.colour_name(c.rgb)} ({c.hex})']
         if i in role_of_cand:
             bits.append(f'legend “{role_of_cand[i].word}”')
+        if c.variants:
+            bits.append(f'+{len(c.variants)} shade' + ('s' if len(c.variants) > 1 else ''))
         if flat[i]:
             bits.append('flat line')
         return ' · '.join(bits)
@@ -456,6 +458,7 @@ with right:
         st.caption(st.session_state.assign_note)
 
     picked = {}
+    picked_shades = {}
     for key in KEYS:                      # colours change when the search area changes
         if st.session_state.get(key + '_sel') not in names:
             st.session_state[key + '_sel'] = NONE
@@ -472,6 +475,7 @@ with right:
             picked[label] = None
         else:
             rgb = cands[names.index(choice)].rgb
+            picked_shades[label] = cands[names.index(choice)].variants
             c2.markdown(f'<span class="bcd-chip"><span class="sw" style="background:{"#%02x%02x%02x" % rgb};'
                         f'width:34px;height:34px"></span></span>', unsafe_allow_html=True)
             picked[label] = rgb
@@ -486,7 +490,7 @@ for label in SERIES:
     rgb = picked[label]
     traces[label] = None if rgb is None else trace(digest, img, area_t, tuple(int(v) for v in rgb), bg,
                                                    float(tolerance), int(bridge), edge.lower().replace(' edge', ''),
-                                                   others)
+                                                   others, picked_shades.get(label, ()))
 colours = [contrast_colour(picked[l]) if picked[l] is not None else '#888' for l in SERIES]
 figure_slot.plotly_chart(overlay_figure(data, img, area, y_refs, x_refs, traces, colours),
                          width='stretch', config={'displaylogo': False, 'scrollZoom': False})

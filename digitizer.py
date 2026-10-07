@@ -238,10 +238,15 @@ class ColourCandidate:
     rgb: tuple
     pixels: int
     coverage: float   # share of plot columns that contain this colour
+    variants: tuple = ()   # other shades of the same line (e.g. under a translucent fill)
 
     @property
     def hex(self) -> str:
         return '#%02x%02x%02x' % self.rgb
+
+    @property
+    def shades(self) -> tuple:
+        return (self.rgb,) + tuple(self.variants)
 
 
 def colour_candidates(img: np.ndarray, area: PlotArea, max_n: int = 6) -> list[ColourCandidate]:
@@ -284,11 +289,70 @@ def colour_candidates(img: np.ndarray, area: PlotArea, max_n: int = 6) -> list[C
         s_sel = sat[sel]
         core = reg[sel][s_sel >= np.median(s_sel)]
         rgb = tuple(int(round(v * 255)) for v in np.median(core, axis=0))
-        cov = float(sel.any(axis=0).sum() / ncols)
-        if cov >= 0.06:                    # markers and small icons are not lines
-            out.append(ColourCandidate(rgb, int(sel.sum()), cov))
+        cols = sel.any(axis=0)
+        cov = float(cols.sum() / ncols)
+        if cov >= 0.03:
+            out.append((ColourCandidate(rgb, int(sel.sum()), cov), sel))
+    out = _merge_shades(out, ncols)
+    out = [c for c in out if c.coverage >= 0.06]      # markers and small icons are not lines
     out.sort(key=lambda c: (c.coverage, c.pixels), reverse=True)
     return out[:max_n]
+
+
+def _merge_shades(items, ncols, max_dist: float = 60, max_overlap: float = 0.35, reach: int = 4):
+    """Join colours that are one line seen in two shades.
+
+    Apps often draw a translucent fill over part of a line (the shading under
+    the meat line tints the ambient line where it runs inside it). The two
+    shades are close in colour and either appear in different parts of the
+    time axis, or, where both appear in a column (JPEG blurs them together),
+    lie at the same height. Two separate lines in similar colours run at
+    different heights instead.
+    items: (candidate, pixel mask over the search area)
+    """
+    items = sorted(items, key=lambda it: it[0].pixels, reverse=True)
+
+    def grow(m):
+        g = m.copy()
+        for k in range(1, reach + 1):
+            g |= np.roll(m, k, axis=0) | np.roll(m, -k, axis=0)
+        return g
+
+    grown_all = [grow(m) for _, m in items]
+    merged = []      # (candidate, mask, indices of the items it was made from)
+    for j, (cand, mask) in enumerate(items):
+        cols = mask.any(axis=0)
+        for i, (m, mmask, idx) in enumerate(merged):
+            close = min(sum((a - b) ** 2 for a, b in zip(cand.rgb, shade)) ** .5 for shade in m.shades) < max_dist
+            if not close:
+                continue
+            mcols = mmask.any(axis=0)
+            shared = cols & mcols
+            overlap = shared.sum() / max(1, min(cols.sum(), mcols.sum()))
+            same_height = False
+            if shared.any():
+                # pixels lying on some third line (blurred edges of another
+                # colour) say nothing about this pair, so leave them out
+                elsewhere = np.zeros_like(mask)
+                for k, g in enumerate(grown_all):
+                    if k != j and k not in idx:
+                        elsewhere |= g
+                own = (mask & ~elsewhere)[:, shared]
+                ref = mmask[:, shared]
+                rows = np.arange(mask.shape[0])[:, None]
+                big = mask.shape[0] + 1
+                lo = np.where(ref, rows, big).min(axis=0) - reach
+                hi = np.where(ref, rows, -1).max(axis=0) + reach
+                has = own.any(axis=0)
+                inside = (~own | ((rows >= lo) & (rows <= hi))).all(axis=0)   # within the other shade's extent
+                same_height = has.any() and inside[has].mean() > 0.7
+            if overlap < max_overlap or same_height:
+                merged[i] = (ColourCandidate(m.rgb, m.pixels + cand.pixels, float((cols | mcols).sum() / ncols),
+                                             m.variants + (cand.rgb,)), mmask | mask, idx + [j])
+                break
+        else:
+            merged.append((cand, mask, [j]))
+    return [m for m, _, _ in merged]
 
 
 def _line_like(sat: np.ndarray, reach: int = 4, step: float = 0.08) -> np.ndarray:
@@ -371,7 +435,7 @@ def _fit_to_colour(p: np.ndarray, rgb, bg):
     return a, resid
 
 
-def coverage_map(region: np.ndarray, rgb, bg, tolerance: float, others=()) -> np.ndarray:
+def coverage_map(region: np.ndarray, rgb, bg, tolerance: float, others=(), shades=()) -> np.ndarray:
     """0..1 per pixel: how much of the pixel is the line colour.
 
     An anti-aliased edge pixel is a blend of background and line colour. The
@@ -380,23 +444,31 @@ def coverage_map(region: np.ndarray, rgb, bg, tolerance: float, others=()) -> np
     tolerance (otherwise it is some other colour). Pixels that another line
     colour in the chart explains better are left out, so similar colours (a
     pale ambient line next to a purple target line) are kept apart.
+    shades: more colours of this same line; a pixel counts if it fits any.
     """
     p = region.astype(np.float32)
-    a, resid = _fit_to_colour(p, rgb, bg)
+    own = [tuple(int(v) for v in rgb)] + [tuple(int(v) for v in sh) for sh in shades]
     if float(((np.asarray(rgb, np.float32) - np.asarray(bg, np.float32)) ** 2).sum()) < 300:
+        _, resid = _fit_to_colour(p, rgb, bg)
         return np.clip(1 - resid / tolerance, 0, 1)
-    cov = np.where(resid < tolerance * np.maximum(a, 0.25), a, 0.0)
-    # a coloured line's pixels carry its colour; grey pixels (gridlines,
-    # text) are not part of it even when they fall within the tolerance
-    blend = np.asarray(bg, np.float32) + a[..., None] * (np.asarray(rgb, np.float32) - np.asarray(bg, np.float32))
-    want = blend.max(axis=2) - blend.min(axis=2)
+    cov = np.zeros(p.shape[:2], np.float32)
+    best = np.full(p.shape[:2], np.inf, np.float32)
     have = p.max(axis=2) - p.min(axis=2)
-    cov[(want > 20) & (have < 0.45 * want)] = 0
+    for shade in dict.fromkeys(own):
+        a, resid = _fit_to_colour(p, shade, bg)
+        c = np.where(resid < tolerance * np.maximum(a, 0.25), a, 0.0)
+        # a coloured line's pixels carry its colour; grey pixels (gridlines,
+        # text) are not part of it even when they fall within the tolerance
+        blend = np.asarray(bg, np.float32) + a[..., None] * (np.asarray(shade, np.float32) - np.asarray(bg, np.float32))
+        want = blend.max(axis=2) - blend.min(axis=2)
+        c[(want > 20) & (have < 0.45 * want)] = 0
+        cov = np.maximum(cov, c)
+        best = np.minimum(best, resid)
     for o in others:
-        if tuple(int(v) for v in o) == tuple(int(v) for v in rgb):
+        if tuple(int(v) for v in o) in own:
             continue
         ao, ro = _fit_to_colour(p, o, bg)
-        cov[(ro < resid) & (ao > 0.3)] = 0
+        cov[(ro < best) & (ao > 0.3)] = 0
     cov[cov < 0.12] = 0
     return cov
 
@@ -437,11 +509,11 @@ def _column_runs(col: np.ndarray, max_runs: int = 6):
 
 
 def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
-               max_bridge_px: int = 25, edge: str = 'centre', others=()) -> Trace:
+               max_bridge_px: int = 25, edge: str = 'centre', others=(), shades=()) -> Trace:
     """Follow one coloured line through the search area, one value per pixel column."""
     reg = img[area.top:area.bottom + 1, area.left:area.right + 1]
     H, W = reg.shape[:2]
-    cov = coverage_map(reg, rgb, bg, tolerance, others)
+    cov = coverage_map(reg, rgb, bg, tolerance, others, shades)
 
     cands = [_column_runs(cov[:, x]) for x in range(W)]
     masses = [r[1] for col in cands for r in col]

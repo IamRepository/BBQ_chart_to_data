@@ -206,20 +206,6 @@ def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3) ->
     xs = pl + hrs / PROBE_HOURS * (pr - pl)
     ypx = lambda v: pb + np.asarray(v) * (pt - pb) / PROBE_YMAX
     yi = ypx(probe_internal(hrs))
-    # pink fill under the internal line, fading downwards
-    fill = Image.new('RGB', (W, H), (255, 255, 255))
-    grad = Image.linear_gradient('L').resize((W, int(pb - pt)))
-    pink = Image.new('RGB', (W, int(pb - pt)), (247, 222, 222))
-    whiteband = Image.new('RGB', (W, int(pb - pt)), (255, 255, 255))
-    fill.paste(Image.composite(whiteband, pink, grad), (0, int(pt)))
-    mask = Image.new('L', (W, H), 0)
-    ImageDraw.Draw(mask).polygon(list(zip(xs, yi)) + [(xs[-1], pb), (xs[0], pb)], fill=255)
-    im.paste(fill, (0, 0), mask)
-    d = ImageDraw.Draw(im)
-    for k in range(1, 6):                                   # redraw gridlines over the fill
-        y = pb + k * (pt - pb) / 6
-        _dashed_h(d, pl, pr, y, grid, lw, 3 * u, 2.5 * u)
-
     # dotted prediction lines from the peak
     peak = (pl + 10 / PROBE_HOURS * (pr - pl), ypx(92.4))
     for end_v in (75, 62):
@@ -233,6 +219,18 @@ def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3) ->
     d.line([(pl, yt), (pr, yt)], fill=TARGET_RGB, width=line_w)
     d.polygon([(pl - 3 * u, yt - 4 * u), (pl - 3 * u, yt + 4 * u), (pl + 4 * u, yt)], fill=(40, 200, 40))
     d.line(list(zip(xs, ypx(probe_ambient(hrs)))), fill=AMBIENT_RGB, width=line_w, joint='curve')
+    # translucent red shading under the internal line, drawn over everything
+    # beneath it (as the app does): the ambient line inside it turns from
+    # #9ba5fa to about #a49ee7
+    alpha = np.zeros((H, W), np.float32)
+    alpha[int(pt):int(pb)] = np.linspace(0.16, 0.03, int(pb) - int(pt))[:, None]
+    mask = Image.new('L', (W, H), 0)
+    ImageDraw.Draw(mask).polygon(list(zip(xs, yi)) + [(xs[-1], pb), (xs[0], pb)], fill=255)
+    a_map = (alpha * (np.asarray(mask, np.float32) / 255))[..., None]
+    arr = np.asarray(im, np.float32)
+    arr = arr * (1 - a_map) + np.array(INTERNAL_RGB, np.float32) * a_map
+    im = Image.fromarray(np.clip(arr + 0.5, 0, 255).astype(np.uint8))
+    d = ImageDraw.Draw(im)
     d.line(list(zip(xs, yi)), fill=INTERNAL_RGB, width=line_w, joint='curve')
     d.polygon([(peak[0] - 4 * u, peak[1] - 6 * u), (peak[0] + 4 * u, peak[1] - 6 * u), (peak[0], peak[1])], fill=INTERNAL_RGB)
 

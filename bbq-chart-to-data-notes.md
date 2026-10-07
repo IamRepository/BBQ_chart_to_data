@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 7 October 2026 for v1.1.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 7 October 2026 for v1.1.1. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -11,6 +11,9 @@ Last updated 7 October 2026 for v1.1.0. Repo: github.com/IamRepository/BBQ_chart
 
 ## User's chart (feedback 7 Oct 2026, v1.0.0)
 Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd), "Ambient" (lavender #9ba5fa); flat target line at 100 °C; red internal line with a pink gradient fill and a red peak marker; dashed grey gridlines; y labels 0°, 24°, 48°, 72°, 96°, 119°, 143° (rounded, scale max probably ~143.3); x labels 4h … 24h (elapsed); "Cook Again" red button under the chart. v1.0.0 failed on it: the lavender line was too pale for the colour finder, the target line was taken as ambient (hotter of two), and the axes had to be typed (default 100 left at the top). The screenshot the user sent was of the app view, with overlays covering the original lines, so testing uses a replica (example_chart.make_probe_example). Still to do: test with the original phone screenshot.
+
+## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
+The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
 
 ## Files
 - app.py: five steps. Axes: segmented control "From the axis labels" (default when read) or manual references. Elapsed-hour charts ask for start date + start time (time at 0 h); clock charts ask for the date at the first label. Table rows are anchored to the start time (elapsed) or midnight (clock), and none before 0 h. Lines: legend roles first (flat lines never auto-assigned), else ambient = line hotter over the first 20 % of the shared time (dg.hotter_early). Overlay shows the labels used as pink dotted lines. A warning shows while the start date/time is the placeholder. IMAGE_KEYS cleared when a new image arrives (sha1 digest). Text reading is cached per image (about 4-6 s).
@@ -29,7 +32,7 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (17 tests) and test_chart_text.py (12 tests; skipped without Tesseract).
+- test_digitizer.py (17 tests) and test_chart_text.py (13 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.
