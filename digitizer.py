@@ -519,6 +519,13 @@ def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
     masses = [r[1] for col in cands for r in col]
     thick = float(np.median(masses)) if masses else 1.0
     thick = max(thick, 1.0)
+    if edge != 'top':
+        # markers drawn on the line in its colour (a peak triangle, dots) are
+        # far thicker than the line; remove them and bridge the line across
+        cleaned = remove_markers(cov, thick)
+        if cleaned is not cov:
+            cov = cleaned
+            cands = [_column_runs(cov[:, x]) for x in range(W)]
 
     # flatten candidates (sorted by column)
     X, C, M, T, B = [], [], [], [], []
@@ -604,6 +611,44 @@ def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
     span = (idx[-1] - idx[0] + 1) if idx.size else 1
     xs = np.arange(area.left, area.right + 1)
     return Trace(xs, y + area.top, found, thick, float(found.sum() / span))
+
+
+def _box_any(mask: np.ndarray, s: int, forward: bool) -> np.ndarray:
+    """Count of True in the s x s window starting (forward) or ending (backward) at each pixel."""
+    c = np.pad(mask.astype(np.int32), ((1, s), (1, s))).cumsum(0).cumsum(1)
+    h, w = mask.shape
+    if forward:     # window rows i..i+s-1, cols j..j+s-1
+        return c[s:s + h, s:s + w] - c[0:h, s:s + w] - c[s:s + h, 0:w] + c[0:h, 0:w]
+    pad = np.pad(mask.astype(np.int32), ((s, 0), (s, 0))).cumsum(0).cumsum(1)
+    pad = np.pad(pad, ((1, 0), (1, 0)))
+    return pad[s + 1:s + 1 + h, s + 1:s + 1 + w] - pad[1:1 + h, s + 1:s + 1 + w] - pad[s + 1:s + 1 + h, 1:1 + w] + pad[1:1 + h, 1:1 + w]
+
+
+def remove_markers(cov: np.ndarray, thick: float, max_share: float = 0.01) -> np.ndarray:
+    """Blank solid blobs much thicker than the line (markers such as a peak triangle).
+
+    A morphological opening with a square about twice the line width: thin
+    lines (straight, curved or steep) do not survive it, solid shapes do.
+    Large solid areas (a filled chart) are left alone. Returns cov unchanged
+    (the same object) when there is nothing to remove.
+    """
+    mask = cov >= 0.5
+    side = int(np.ceil(1.8 * thick)) + 1
+    side = max(side, 4)
+    full = _box_any(mask, side, forward=True) >= side * side
+    if not full.any():
+        return cov
+    blob = _box_any(full, side, forward=False) > 0
+    if blob.sum() > max(max_share * mask.size, 25 * side * side):
+        return cov                      # a filled area, not a marker
+    grown = blob.copy()
+    for dy in (-2, -1, 1, 2):
+        grown |= np.roll(blob, dy, axis=0)
+    for dx in (-2, -1, 1, 2):
+        grown |= np.roll(blob, dx, axis=1)
+    out = cov.copy()
+    out[grown] = 0
+    return out
 
 
 def _prune_islands(path, X, T, B, C, thick, H):
@@ -750,9 +795,18 @@ def build_table(series: dict, cal: Calibration, interval_s: float, unit: str = '
     data = {'Timestamp': [(origin + timedelta(seconds=float(s))).strftime(TIME_FORMAT) for s in grid]}
     for label, (sec, val) in series.items():
         data[f'{label} ({unit})'] = np.round(_resample(sec, val, grid, max_gap_s), decimals)
-    df = pd.DataFrame(data)
-    value_cols = df.columns[1:]
-    return df.dropna(subset=value_cols, how='all').reset_index(drop=True)
+    return _trim_empty_ends(pd.DataFrame(data))
+
+
+def _trim_empty_ends(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows without any value at the start and end only. Rows inside the
+    cook stay, with empty cells, so the clock stays regular and gaps (probe
+    dropouts, app not connected) are visible."""
+    has = df[df.columns[1:]].notna().any(axis=1).to_numpy()
+    if not has.any():
+        return df.iloc[0:0].reset_index(drop=True)
+    first, last = np.flatnonzero(has)[[0, -1]]
+    return df.iloc[first:last + 1].reset_index(drop=True)
 
 
 def to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -780,5 +834,4 @@ def build_pixel_table(traces: dict, cal: Calibration, unit: str = '°C', smoothi
     for label in traces:
         v = cols.get(label, np.full(xs.shape, np.nan))
         data[f'{label} ({unit})'] = np.round(v, decimals)
-    df = pd.DataFrame(data)
-    return df.dropna(subset=df.columns[1:], how='all').reset_index(drop=True)
+    return _trim_empty_ends(pd.DataFrame(data))

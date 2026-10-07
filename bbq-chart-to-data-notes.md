@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 7 October 2026 for v1.1.1. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 8 October 2026 for v1.1.2. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -14,6 +14,13 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
+
+## v1.1.2 (checked on the user's original screenshot, 8 Oct 2026)
+Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180° step 30, 4h-24h, no data 16.5-19.5 h, app peak 85.6 °C) runs through: all 7 temperature labels and 6 time labels read, legend assigns Internal/Ambient, target ignored, ambient traced inside the shading (no second shade needed on this one). Fixes:
+- remove_markers (digitizer): opening with a square ~1.8 x line width removes solid blobs in the line colour (the red ▼ peak marker raised the meat peak to 89.7; now 86.0 vs 85.6 in the app). Skipped for "Top edge" mode and for blobs larger than max(1 % of the area, 25 squares).
+- Gaps inside the cook stay as empty rows (regular clock); only empty rows at the ends are dropped (_trim_empty_ends).
+- read_date / parse_date (chart_text): date above the chart ('Jun 21, 2026', '21.06.2026', ...) fills the start date; the warning then asks only for the start time.
+- Gridlines in the original are within ±1 px of even spacing, so the fitted scale is within ~0.3 °C of the labels.
 
 ## Files
 - app.py: five steps. Axes: segmented control "From the axis labels" (default when read) or manual references. Elapsed-hour charts ask for start date + start time (time at 0 h); clock charts ask for the date at the first label. Table rows are anchored to the start time (elapsed) or midnight (clock), and none before 0 h. Lines: legend roles first (flat lines never auto-assigned), else ambient = line hotter over the first 20 % of the shared time (dg.hotter_early). Overlay shows the labels used as pink dotted lines. A warning shows while the start date/time is the placeholder. IMAGE_KEYS cleared when a new image arrives (sha1 digest). Text reading is cached per image (about 4-6 s).
@@ -32,7 +39,7 @@ The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shadin
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (17 tests) and test_chart_text.py (13 tests; skipped without Tesseract).
+- test_digitizer.py (19 tests) and test_chart_text.py (16 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.

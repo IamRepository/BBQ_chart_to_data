@@ -132,6 +132,15 @@ class ProbeAppChart(unittest.TestCase):
     def test_table_png(self):
         self.check_table(self.img)
 
+    def test_peak_marker_not_read_as_temperature(self):
+        """The red triangle on the meat line at its peak must not raise the peak."""
+        df = pipeline(self.img)
+        self.assertLess(df['Meat temperature (°C)'].max(), 92.4 + 0.6)
+        self.assertGreater(df['Meat temperature (°C)'].max(), 92.4 - 0.6)
+
+    def test_no_date_on_replica(self):
+        self.assertIsNone(ct.read_date(self.img, self.lay))
+
     def test_table_jpeg(self):
         self.check_table(jpeg(self.ex.image))
 
@@ -158,6 +167,13 @@ class ClockChart(unittest.TestCase):
 
 
 class Parsing(unittest.TestCase):
+    def test_dates(self):
+        from datetime import date
+        for text in ('Jun 21, 2026', '21 June 2026', '21.06.2026', '21/06/2026', '2026-06-21', 'Sun, Jun 21, 2026'):
+            self.assertEqual(ct.parse_date(text), date(2026, 6, 21), text)
+        self.assertIsNone(ct.parse_date('23:39  57%'))
+        self.assertIsNone(ct.parse_date('Target Temp 100°C'))
+
     def test_time_values(self):
         self.assertEqual(ct._time_value('4h'), ('elapsed', 4.0))
         self.assertEqual(ct._time_value('1h30'), ('elapsed', 1.5))

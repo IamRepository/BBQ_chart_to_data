@@ -40,7 +40,7 @@ INTERVALS = {
 # widget keys that belong to one image; cleared when a new image is loaded
 IMAGE_KEYS = ('y_mode', 'y1_sel', 'y1_px', 'y1_val', 'y2_sel', 'y2_px', 'y2_val',
               'x_mode', 'x1_sel', 'x1_px', 'x1_date', 'x1_time', 'x2_sel', 'x2_px', 'x2_date', 'x2_time',
-              'start_date', 'start_time', 'label_date', 'start_touched', 'manual_touched',
+              'start_date', 'start_time', 'label_date', 'start_touched', 'manual_touched', 'date_applied',
               'amb_sel', 'amb_hex', 'meat_sel', 'meat_hex',
               'area_l', 'area_t', 'area_r', 'area_b', 'y_prefilled', 'assign_note')
 EXAMPLES = {'probe': 'Example: probe app (elapsed hours)', 'clock': 'Example: clock times'}
@@ -62,9 +62,9 @@ def analyse_image(data: bytes):
 
 @st.cache_data(show_spinner=False, max_entries=8)
 def read_text(digest: str, _img, _layout):
-    """Axis labels and legend (slowest step: a few seconds)."""
+    """Axis labels, legend and the cook date (slowest step: a few seconds)."""
     return (ct.read_temperature_axis(_img, _layout), ct.read_time_axis(_img, _layout),
-            ct.read_legend(_img, _layout))
+            ct.read_legend(_img, _layout), ct.read_date(_img, _layout))
 
 
 @st.cache_data(show_spinner=False, max_entries=4)
@@ -230,9 +230,14 @@ if st.session_state.get('image_digest') != digest:
 text_ok = ct.available()
 if text_ok:
     with st.spinner('Reading the axis labels and the legend…'):
-        yfit, xfit, legend = read_text(digest, img, layout)
+        yfit, xfit, legend, cook_date = read_text(digest, img, layout)
 else:
-    yfit, xfit, legend = ct.AxisFit(), ct.AxisFit(), []
+    yfit, xfit, legend, cook_date = ct.AxisFit(), ct.AxisFit(), [], None
+if cook_date and not st.session_state.get('date_applied'):
+    # the screenshot shows the date (e.g. 'Jun 21, 2026'): use it as the start date
+    for key in ('start_date', 'label_date', 'x1_date', 'x2_date'):
+        st.session_state[key] = cook_date
+    st.session_state.date_applied = True
 
 bg = tuple(float(v) for v in layout.background)
 unit = st.session_state.get('unit', '°C')
@@ -262,7 +267,7 @@ with right:
         st.caption(f'Read {len(used)} labels: **{fmt_list([l.text + "°" for l in sorted(used, key=lambda l: -l.value)])}**. '
                    f'Top gridline = {top_v:.1f}°, bottom = {bot_v:.1f}°; '
                    f'{abs(yfit.slope):.2f}° per pixel.'
-                   + (f' Labels fit the scale within {yfit.residual:.1f}° (they are rounded on the chart).'
+                   + (f' All labels fit one straight scale within {yfit.residual:.1f}°.'
                       if yfit.residual >= 0.05 else '')
                    + (f' Not used (unreadable): {len(rejected)}.' if rejected else ''))
         lo, hi = min(used, key=lambda l: l.pos), max(used, key=lambda l: l.pos)
@@ -310,6 +315,8 @@ with right:
                       on_change=touched, args=('start_touched',))
         c2.time_input('Start time (at 0 h)', key='start_time', step=60,
                       on_change=touched, args=('start_touched',))
+        if cook_date:
+            st.caption(f'Start date read from the screenshot: {cook_date:%d/%m/%Y}. Set the start time.')
         t0 = datetime.combine(st.session_state.start_date, st.session_state.start_time)
         last = used[-1].value
         x1, t1, x2, t2 = zero, t0, float(xfit.pos(last)), t0 + timedelta(hours=last)
@@ -326,7 +333,7 @@ with right:
         x1, t1 = used[0].pos, midnight + timedelta(hours=used[0].value)
         x2, t2 = used[-1].pos, midnight + timedelta(hours=used[-1].value)
         anchor = midnight
-        start_needed = not st.session_state.start_touched
+        start_needed = not (st.session_state.start_touched or cook_date)
         x_refs = [(l.pos, l.text) for l in used]
     else:
         if text_ok and not xfit.ok:
@@ -509,7 +516,9 @@ if problems:
 st.divider()
 st.subheader('5. Data')
 if start_needed:
-    st.warning('Set the start date and time (step 3); the timestamps below use a placeholder date and time.'
+    st.warning((f'Set the start time (step 3). The date {cook_date:%d/%m/%Y} was read from the screenshot; the '
+                'time is a placeholder until you set it.' if cook_date else
+                'Set the start date and time (step 3); the timestamps below use a placeholder date and time.')
                if x_mode == FROM_LABELS else
                'Check the axis values and times in steps 2 and 3; they are still at their starting values.')
 m = st.columns(4)

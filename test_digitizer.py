@@ -144,6 +144,21 @@ class Accuracy(unittest.TestCase):
         self.assertTrue(np.isnan(tr.y[early]).all())
 
 
+class Markers(unittest.TestCase):
+    def test_solid_marker_removed_line_kept(self):
+        cov = np.zeros((80, 200))
+        cov[40:43, :] = 1.0                      # a 3 px line
+        cov[25:42, 90:110] = 1.0                 # a solid marker on it
+        out = dg.remove_markers(cov, 3.0)
+        self.assertEqual(out[30, 100], 0)
+        self.assertTrue((out[40:43, :80] == 1).all() and (out[40:43, 120:] == 1).all())
+
+    def test_nothing_to_remove(self):
+        cov = np.zeros((80, 200))
+        cov[40:43, :] = 1.0
+        self.assertIs(dg.remove_markers(cov, 3.0), cov)
+
+
 class Roles(unittest.TestCase):
     def test_ambient_is_hotter_at_the_start(self):
         from example_chart import make_probe_example, AMBIENT_RGB, INTERNAL_RGB
@@ -194,10 +209,13 @@ class Table(unittest.TestCase):
         sec = np.r_[np.arange(0, 3600, 40.0), np.arange(7200, 9000, 40.0)]
         val = np.full(sec.shape, 100.0)
         df = dg.build_table({'Ambient temperature': (sec, val)}, self.cal, 60, max_gap_s=120)
-        stamps = set(df['Timestamp'])
-        self.assertNotIn('01/06/2026 19:30', stamps)
-        self.assertIn('01/06/2026 18:30', stamps)
-        self.assertIn('01/06/2026 20:29', stamps)
+        row = dict(zip(df['Timestamp'], df['Ambient temperature (°C)']))
+        self.assertTrue(np.isnan(row['01/06/2026 19:30']), 'the gap is kept as an empty row')
+        self.assertEqual(row['01/06/2026 18:30'], 100.0)
+        self.assertEqual(row['01/06/2026 20:29'], 100.0)
+        self.assertEqual(len(df), len(set(df['Timestamp'])))
+        steps = np.diff([datetime.strptime(t, dg.TIME_FORMAT) for t in df['Timestamp']])
+        self.assertTrue(all(s == timedelta(minutes=1) for s in steps), 'one row every minute, gaps included')
 
     def test_csv(self):
         series = {k: dg.series_in_units(t, self.cal) for k, t in self.traces.items()}

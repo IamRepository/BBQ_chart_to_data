@@ -475,3 +475,60 @@ def read_legend(img: np.ndarray, layout: Layout) -> list:
         if rgb is not None:
             found[role] = LegendEntry(role, word, rgb, box)
     return list(found.values())
+
+
+# --------------------------------------------------------------------------- date
+
+MONTHS = {m: i + 1 for i, m in enumerate(('jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                                          'jul', 'aug', 'sep', 'oct', 'nov', 'dec'))}
+
+
+def parse_date(text: str):
+    """First date in the text, as datetime.date, or None.
+
+    Understands 'Jun 21, 2026', '21 June 2026', '21.06.2026', '21/06/2026'
+    (day first) and '2026-06-21'.
+    """
+    from datetime import date
+    t = text.replace('\n', ' ')
+    patterns = (
+        (r'\b([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b', lambda m: (m[3], m[1], m[2])),
+        (r'\b(\d{1,2})(?:st|nd|rd|th)?\.?\s+([A-Za-z]{3,9})\.?,?\s+(\d{4})\b', lambda m: (m[3], m[2], m[1])),
+        (r'\b(\d{4})-(\d{1,2})-(\d{1,2})\b', lambda m: (m[1], m[2], m[3])),
+        (r'\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b', lambda m: (m[3], m[2], m[1])),
+    )
+    for pattern, order in patterns:
+        for m in re.finditer(pattern, t):
+            y, mo, d = order(m)
+            if mo.isdigit():
+                month = int(mo)
+            else:
+                month = MONTHS.get(mo[:3].lower())
+                if month is None:
+                    continue
+            try:
+                return date(int(y), month, int(d))
+            except ValueError:
+                continue
+    return None
+
+
+def read_date(img: np.ndarray, layout: Layout):
+    """The cook date if the screenshot shows one above the chart (e.g. 'Jun 21, 2026')."""
+    if layout.plot is None or not available():
+        return None
+    top = layout.plot.top
+    if top < 20:
+        return None
+    region = img[:top]
+    im = Image.fromarray(region).convert('L')
+    if np.asarray(im).mean() < 110:
+        im = ImageOps.invert(im)
+    scale = 2 if img.shape[1] < 900 else 1
+    if scale > 1:
+        im = im.resize((im.width * scale, im.height * scale), Image.LANCZOS)
+    try:
+        text = pytesseract.image_to_string(im, config='--psm 11')
+    except Exception:
+        return None
+    return parse_date(text)
