@@ -144,6 +144,19 @@ class Accuracy(unittest.TestCase):
         self.assertTrue(np.isnan(tr.y[early]).all())
 
 
+class Roles(unittest.TestCase):
+    def test_ambient_is_hotter_at_the_start(self):
+        from example_chart import make_probe_example, AMBIENT_RGB, INTERNAL_RGB
+        for ex, amb, meat_ in ((make_example(), (240, 140, 30), (220, 45, 60)),
+                               (make_probe_example(), AMBIENT_RGB, INTERNAL_RGB)):
+            img, lay, area, cands = run(ex)
+            others = [c.rgb for c in cands]
+            ta = dg.trace_line(img, area, pick(cands, amb).rgb, lay.background, others=others)
+            tm = dg.trace_line(img, area, pick(cands, meat_).rgb, lay.background, others=others)
+            self.assertTrue(dg.hotter_early(ta, tm))
+            self.assertFalse(dg.hotter_early(tm, ta))
+
+
 class Table(unittest.TestCase):
     def setUp(self):
         self.ex = make_example()

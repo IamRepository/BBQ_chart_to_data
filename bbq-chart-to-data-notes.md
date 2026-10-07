@@ -1,32 +1,40 @@
 # BBQ Chart to Data: code notes
 
-Last updated 7 October 2026 for v1.0.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 7 October 2026 for v1.1.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
 - Every release zip includes this file, updated for that release.
 - Keep files at the top level (subfolders did not survive manual upload in the other projects).
-- After uploading a release that changes more than app.py, reboot the app (Manage app, ⋮, Reboot app).
+- After uploading a release that changes more than app.py, reboot the app (Manage app, ⋮, Reboot app). A release that adds packages.txt needs the reboot so Tesseract gets installed.
 - Output: Timestamp in "%d/%m/%Y %H:%M" (day first), then "Ambient temperature (unit)", "Meat temperature (unit)". CSV is UTF-8 with BOM (Excel shows °C correctly). The Cook Profile Dashboard's profile_loader imports it as two profiles (checked for v1.0.0).
 
-## Files
-- app.py: page in five steps (screenshot, temperature axis, time axis, lines, data). Overlay figure is a plotly go.Image (PNG data URI) with the search box, reference lines (#c026d3) and traced lines in a contrasting colour. Widget state for one image lives in IMAGE_KEYS and is cleared when a new image arrives (sha1 digest). The example chart prefills 150/0 °C and 01/06/2026 18:00 to 02/06/2026 04:00. Uploads start at 100/0 and 12:00-20:00, and a warning shows while those are unchanged.
-- digitizer.py:
-  - detect_layout: thin strokes against local background (_thin_strokes compares with pixels 4 px either side), rows grouped by extent; largest group = grid. Extent = longest run (breaks up to 6 px, then 16 px for dashed), with coloured pixels counted so data lines crossing a gridline do not cut it. Vertical gridlines at the ends refine left/right. Background for tracing = most common colour inside the plot.
-  - colour_candidates: hue histogram (72 bins) of saturated pixels, ranked by share of columns covered.
-  - coverage_map: projection of each pixel on the background->line colour segment; coverage = position, accepted if the residual < tolerance x max(coverage, 0.25).
-  - _column_runs: runs seeded on coverage >= 0.35, grown 2 px into faint edges.
-  - trace_line: dynamic programming over column runs (reward up to 1 per column; skip 0.25 per column capped at 4; jump cost 45/H per pixel of separation; lookback up to W/3 columns). Then islands short and far from neighbours are dropped. Tall runs at a peak/dip take the far end. Gaps up to max_bridge_px are interpolated.
-  - Calibration: linear, two references per axis.
-  - build_table: regular clock from the start reference; ticks within 0.6 column of the ends keep the end value; gaps longer than max_gap_s stay empty. build_pixel_table: one row per column with seconds.
-- example_chart.py: drawn at 4x and downsampled with LANCZOS. Ambient with a lid-open dip at 22:00 that crosses the meat line; meat from 18:15; legend inside the plot in line colours.
-- test_digitizer.py: 16 tests (layout light/dark, phone card, dashed gridlines, colours, accuracy light/dark/JPEG/half-size/blue-green, crossing, legend, table values, pixel table, gaps, CSV, calibration).
+## User's chart (feedback 7 Oct 2026, v1.0.0)
+Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd), "Ambient" (lavender #9ba5fa); flat target line at 100 °C; red internal line with a pink gradient fill and a red peak marker; dashed grey gridlines; y labels 0°, 24°, 48°, 72°, 96°, 119°, 143° (rounded, scale max probably ~143.3); x labels 4h … 24h (elapsed); "Cook Again" red button under the chart. v1.0.0 failed on it: the lavender line was too pale for the colour finder, the target line was taken as ambient (hotter of two), and the axes had to be typed (default 100 left at the top). The screenshot the user sent was of the app view, with overlays covering the original lines, so testing uses a replica (example_chart.make_probe_example). Still to do: test with the original phone screenshot.
 
-## Measured accuracy (v1.0.0, example chart)
-Mean error 0.03 °C, max 0.3 °C (0.1 px mean) for light, dark, phone screenshot; JPEG q75 0.04 °C mean. The lid-open spike is excluded from these numbers: it is narrower than the line width and is read within a few pixels.
+## Files
+- app.py: five steps. Axes: segmented control "From the axis labels" (default when read) or manual references. Elapsed-hour charts ask for start date + start time (time at 0 h); clock charts ask for the date at the first label. Table rows are anchored to the start time (elapsed) or midnight (clock), and none before 0 h. Lines: legend roles first (flat lines never auto-assigned), else ambient = line hotter over the first 20 % of the shared time (dg.hotter_early). Overlay shows the labels used as pink dotted lines. A warning shows while the start date/time is the placeholder. IMAGE_KEYS cleared when a new image arrives (sha1 digest). Text reading is cached per image (about 4-6 s).
+- chart_text.py (Tesseract via pytesseract; packages.txt installs tesseract-ocr):
+  - y_label_boxes / x_label_boxes: ink segmentation beside / under the plot (long axis lines removed); x labels from the first text line with ≥2 boxes inside the plot width.
+  - _readings: each box read at heights 32/48/64 px, psm 7, digit whitelist; superscripts (°) removed by column segmentation first.
+  - _fit: every pair of candidates from different labels proposes a line; the one explaining most labels wins; least squares on those. Misreads are dropped.
+  - Labels snap to a gridline only when centred on it (0.35 x text height for y, 0.2 x width for x).
+  - Time kinds: elapsed ("4h", "1h30", "90m"), clock ("18:00", unwrapped past midnight), plain numbers (treated as hours).
+  - read_legend: psm 11 over the area above/around the plot; fuzzy word match (ROLE_WORDS); marker colour = coloured pixels left of the word, else the word's own colour.
+- digitizer.py:
+  - detect_layout: rows qualify on their own extent (dashed gridlines in narrow charts) with ≥30 % grey density; rows whose neighbourhood has a coloured core (chroma > 60) are flat data lines, not gridlines. Crossing lines bridged using chroma > 40 (not the saturation ratio, which is high for near-black backgrounds).
+  - colour_candidates: saturation > 0.18 (pastel lines) and _line_like (less colour a few px to one side), so fills are not lines; coverage ≥ 6 % of columns.
+  - coverage_map(…, others): pixels another candidate colour explains better are dropped; grey pixels (chroma < 45 % of the expected blend) are dropped for coloured lines.
+  - trace_line: dynamic programming over column runs, as in v1.0.0.
+  - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
+  - build_table(anchor, not_before).
+- example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
+- test_digitizer.py (17 tests) and test_chart_text.py (12 tests; skipped without Tesseract).
+
+## Measured accuracy (v1.1.0)
+Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.
 
 ## Open ideas
 1. Second Y axis (separate calibration per line).
-2. Text recognition of axis labels (would need tesseract via packages.txt).
-3. Click on the screenshot to place references (streamlit-image-coordinates) instead of choosing gridlines.
-4. Test with real screenshots from the user's apps.
+2. Click on the screenshot to place references (streamlit-image-coordinates) instead of choosing gridlines.
+3. Hide line markers (peak triangle) from the trace.

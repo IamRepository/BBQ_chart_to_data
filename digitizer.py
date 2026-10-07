@@ -122,16 +122,27 @@ def detect_layout(img: np.ndarray) -> Layout:
     drawn = _thin_strokes(img, axis=0)     # data lines lying on a gridline count too
     grey = drawn & (sat < 0.22)
 
+    chroma = img.max(axis=2).astype(np.int16) - img.min(axis=2)
     rows = []
     grey_frac = grey.mean(axis=1)
-    for centre, s, e in _line_groups(np.where(grey_frac >= 0.12, drawn.mean(axis=1), 0), 0.30):
+    # A row qualifies on its own length, not the screen width: a dashed
+    # gridline in a narrow chart covers only a small share of the screen.
+    for centre, s, e in _line_groups(np.where(grey_frac >= 0.06, drawn.mean(axis=1), 0), 0.06):
         if e - s > 6:            # a band of text or a block, not a line
             continue
         # data lines crossing the gridline break the stroke test, so coloured
         # pixels count as part of the row too
-        coloured = np.convolve((sat[max(0, s - 3):e + 4] > 0.25).any(axis=0), np.ones(7), 'same') > 0
+        coloured = np.convolve((chroma[max(0, s - 3):e + 4] > 40).any(axis=0), np.ones(7), 'same') > 0
         lo, hi = _longest_run(drawn[s:e + 1].any(axis=0) | coloured, w)
-        if hi - lo > 0.2 * w:
+        if hi - lo <= 0.2 * w:
+            continue
+        density = grey[s:e + 1].any(axis=0)[lo:hi + 1].mean()
+        # a coloured flat line (target, setpoint) has pale edges that look like
+        # a gridline; its core, a row or two away, is strongly coloured
+        near = [np.median(chroma[r, lo:hi + 1]) for r in range(max(0, s - 2), min(h, e + 3))]
+        if max(near) > 60:
+            continue
+        if density >= 0.3:
             rows.append((centre, float(lo), float(hi)))
 
     layout = Layout(background=bg)
@@ -157,7 +168,7 @@ def detect_layout(img: np.ndarray) -> Layout:
 
     if bottom - top > 10:
         band = (_thin_strokes(img, axis=1) & (sat < 0.22))[top:bottom + 1]
-        for centre, s, e in _line_groups(band.mean(axis=0), 0.45):
+        for centre, s, e in _line_groups(band.mean(axis=0), 0.3):
             if e - s <= 6 and left - 0.02 * w <= centre <= right + 0.02 * w:
                 layout.v_lines.append(centre)
     # vertical gridlines at the ends are the most precise plot edges
@@ -239,7 +250,7 @@ def colour_candidates(img: np.ndarray, area: PlotArea, max_n: int = 6) -> list[C
     mx = reg.max(axis=2)
     mn = reg.min(axis=2)
     sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
-    mask = (sat > 0.35) & (mx > 0.25)
+    mask = (sat > 0.18) & (mx > 0.25) & _line_like(sat)
     if mask.sum() < 20:
         return []
     r, g, b = reg[..., 0], reg[..., 1], reg[..., 2]
@@ -273,9 +284,45 @@ def colour_candidates(img: np.ndarray, area: PlotArea, max_n: int = 6) -> list[C
         s_sel = sat[sel]
         core = reg[sel][s_sel >= np.median(s_sel)]
         rgb = tuple(int(round(v * 255)) for v in np.median(core, axis=0))
-        out.append(ColourCandidate(rgb, int(sel.sum()), float(sel.any(axis=0).sum() / ncols)))
+        cov = float(sel.any(axis=0).sum() / ncols)
+        if cov >= 0.06:                    # markers and small icons are not lines
+            out.append(ColourCandidate(rgb, int(sel.sum()), cov))
     out.sort(key=lambda c: (c.coverage, c.pixels), reverse=True)
     return out[:max_n]
+
+
+def _line_like(sat: np.ndarray, reach: int = 4, step: float = 0.08) -> np.ndarray:
+    """Coloured pixels with clearly less colour a few pixels to one side.
+
+    True for lines (thin in at least one direction), false inside filled
+    areas, so a pale fill under a line is not taken for a line colour."""
+    out = np.zeros(sat.shape, bool)
+    for axis in (0, 1):
+        for shift in (reach, -reach):
+            out |= (sat - np.roll(sat, shift, axis=axis)) > step
+    return out
+
+
+def hotter_early(a: 'Trace', b: 'Trace', share: float = 0.2) -> bool:
+    """True if line a is hotter than line b over the first part of the time they share.
+
+    At the start of a cook the cooker (ambient) is hotter than the meat, even
+    if it is turned down below the meat temperature later in a hold.
+    """
+    both = np.flatnonzero(~np.isnan(a.y) & ~np.isnan(b.y))
+    if both.size < 5:
+        return bool(np.nanmedian(a.y) < np.nanmedian(b.y))
+    first = both[: max(5, int(share * both.size))]
+    return bool(np.mean(a.y[first]) < np.mean(b.y[first]))       # smaller row = hotter
+
+
+def is_flat(trace: 'Trace', plot_height: float) -> bool:
+    """A horizontal line across most of the chart: a target or setpoint, not a measurement."""
+    y = trace.y[~np.isnan(trace.y)]
+    if y.size < 0.4 * trace.y.size:
+        return False
+    lo, hi = np.percentile(y, [5, 95])
+    return (hi - lo) < max(2.0, 0.01 * plot_height)
 
 
 def colour_name(rgb) -> str:
@@ -310,26 +357,46 @@ class Trace:
     columns_found: float     # share of columns between first and last point measured
 
 
-def coverage_map(region: np.ndarray, rgb, bg, tolerance: float) -> np.ndarray:
+def _fit_to_colour(p: np.ndarray, rgb, bg):
+    """(coverage 0..1, distance off the background->colour blend) per pixel."""
+    c = np.asarray(rgb, np.float32)
+    b = np.asarray(bg, np.float32)
+    v = c - b
+    vv = float((v * v).sum())
+    if vv < 300:                          # colour too close to the background
+        d = np.sqrt(((p - c) ** 2).sum(axis=2))
+        return (d < 1e9).astype(np.float32), d
+    a = np.clip(((p - b) * v).sum(axis=2) / vv, 0, 1)
+    resid = np.sqrt(((p - (b + a[..., None] * v)) ** 2).sum(axis=2))
+    return a, resid
+
+
+def coverage_map(region: np.ndarray, rgb, bg, tolerance: float, others=()) -> np.ndarray:
     """0..1 per pixel: how much of the pixel is the line colour.
 
     An anti-aliased edge pixel is a blend of background and line colour. The
     pixel is projected onto the background->line colour segment; the position
     along it is the coverage, and the distance off it must stay within the
-    tolerance (otherwise it is some other colour).
+    tolerance (otherwise it is some other colour). Pixels that another line
+    colour in the chart explains better are left out, so similar colours (a
+    pale ambient line next to a purple target line) are kept apart.
     """
     p = region.astype(np.float32)
-    c = np.asarray(rgb, np.float32)
-    b = np.asarray(bg, np.float32)
-    v = c - b
-    vv = float((v * v).sum())
-    if vv < 300:                          # line colour too close to the background
-        d = np.sqrt(((p - c) ** 2).sum(axis=2))
-        return np.clip(1 - d / tolerance, 0, 1)
-    a = ((p - b) * v).sum(axis=2) / vv
-    a = np.clip(a, 0, 1)
-    resid = np.sqrt(((p - (b + a[..., None] * v)) ** 2).sum(axis=2))
+    a, resid = _fit_to_colour(p, rgb, bg)
+    if float(((np.asarray(rgb, np.float32) - np.asarray(bg, np.float32)) ** 2).sum()) < 300:
+        return np.clip(1 - resid / tolerance, 0, 1)
     cov = np.where(resid < tolerance * np.maximum(a, 0.25), a, 0.0)
+    # a coloured line's pixels carry its colour; grey pixels (gridlines,
+    # text) are not part of it even when they fall within the tolerance
+    blend = np.asarray(bg, np.float32) + a[..., None] * (np.asarray(rgb, np.float32) - np.asarray(bg, np.float32))
+    want = blend.max(axis=2) - blend.min(axis=2)
+    have = p.max(axis=2) - p.min(axis=2)
+    cov[(want > 20) & (have < 0.45 * want)] = 0
+    for o in others:
+        if tuple(int(v) for v in o) == tuple(int(v) for v in rgb):
+            continue
+        ao, ro = _fit_to_colour(p, o, bg)
+        cov[(ro < resid) & (ao > 0.3)] = 0
     cov[cov < 0.12] = 0
     return cov
 
@@ -370,11 +437,11 @@ def _column_runs(col: np.ndarray, max_runs: int = 6):
 
 
 def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
-               max_bridge_px: int = 25, edge: str = 'centre', exclude: Trace | None = None) -> Trace:
+               max_bridge_px: int = 25, edge: str = 'centre', others=()) -> Trace:
     """Follow one coloured line through the search area, one value per pixel column."""
     reg = img[area.top:area.bottom + 1, area.left:area.right + 1]
     H, W = reg.shape[:2]
-    cov = coverage_map(reg, rgb, bg, tolerance)
+    cov = coverage_map(reg, rgb, bg, tolerance, others)
 
     cands = [_column_runs(cov[:, x]) for x in range(W)]
     masses = [r[1] for col in cands for r in col]
@@ -584,11 +651,18 @@ def _resample(sec: np.ndarray, val: np.ndarray, grid: np.ndarray, max_gap_s: flo
 
 
 def build_table(series: dict, cal: Calibration, interval_s: float, unit: str = '°C',
-                max_gap_s: float | None = None, decimals: int = 1) -> pd.DataFrame:
-    """Resample every series onto one regular clock that starts at the start time.
+                max_gap_s: float | None = None, decimals: int = 1,
+                anchor: datetime | None = None, not_before: datetime | None = None) -> pd.DataFrame:
+    """Resample every series onto one regular clock.
 
-    series: {column label: (seconds, values)}
+    series: {column label: (seconds after cal.x1_time, values)}
+    anchor: a time the rows line up with (the start time); rows fall on
+    anchor + k * interval. Defaults to cal.x1_time.
+    not_before: no rows before this time (the start of the cook).
     """
+    shift = 0.0 if anchor is None else (cal.x1_time - anchor).total_seconds()
+    series = {k: (s + shift, v) for k, (s, v) in series.items()}
+    origin = cal.x1_time if anchor is None else anchor
     starts = [s.min() for s, _ in series.values() if s.size]
     ends = [s.max() for s, _ in series.values() if s.size]
     if not starts:
@@ -596,10 +670,12 @@ def build_table(series: dict, cal: Calibration, interval_s: float, unit: str = '
     reach = 0.6 * cal.seconds_per_px          # a tick within ~half a column of the ends is kept
     first = np.ceil((min(starts) - reach) / interval_s - 1e-9) * interval_s
     last = np.floor((max(ends) + reach) / interval_s + 1e-9) * interval_s
+    if not_before is not None:
+        first = max(first, np.ceil((not_before - origin).total_seconds() / interval_s - 1e-9) * interval_s)
     grid = np.arange(first, last + interval_s / 2, interval_s)
     if max_gap_s is None:
         max_gap_s = max(3 * cal.seconds_per_px, 1.5 * interval_s)
-    data = {'Timestamp': [(cal.x1_time + timedelta(seconds=float(s))).strftime(TIME_FORMAT) for s in grid]}
+    data = {'Timestamp': [(origin + timedelta(seconds=float(s))).strftime(TIME_FORMAT) for s in grid]}
     for label, (sec, val) in series.items():
         data[f'{label} ({unit})'] = np.round(_resample(sec, val, grid, max_gap_s), decimals)
     df = pd.DataFrame(data)

@@ -107,3 +107,142 @@ def make_example(width: int = 1080, height: int = 760, dark: bool = False, scale
 
 if __name__ == '__main__':
     make_example().image.save('example_chart.png')
+
+
+# --------------------------------------------------------------------------- probe-app style replica
+# Modelled on a phone probe app: legend dots with grey words, a flat target
+# line, a pale (lavender) ambient line, a red internal line with a pink fill,
+# dashed gridlines, rounded axis labels (0°, 24°, ... 143°) and elapsed-hour
+# time labels (4h ... 24h), plus a red button under the chart.
+
+PROBE_YMAX = 143.3           # the app's scale; labels are rounded to whole degrees
+PROBE_HOURS = 24.0
+PROBE_END = 22.75            # the cook ended at 22 h 45 min
+PROBE_TARGET = 100.0
+
+AMBIENT_RGB = (155, 165, 250)
+INTERNAL_RGB = (250, 58, 55)
+TARGET_RGB = (221, 85, 253)
+
+
+def probe_ambient(h):
+    h = np.asarray(h, float)
+    v = 22 + 58 * (1 - np.exp(-h / 0.6)) + 4 * np.sin(h * 5.0)        # warming to ~80
+    v = np.where(h > 3.4, 108 + 3 * np.sin(h * 6.0), v)                # raised to ~108
+    for c, a in ((5.0, -14), (5.9, -16), (7.3, 25), (7.9, 30), (8.6, 22), (9.2, 15)):
+        v = v + a * np.exp(-((h - c) / 0.12) ** 2)                     # lid openings and spikes
+    v = np.where(h > 10.0, 72 - 0.6 * (h - 10.0), v)                   # wrapped, smoker turned down
+    v = np.where(h > 22.5, 64 - 120 * (h - 22.5), v)                   # taken off
+    return v
+
+
+def probe_internal(h):
+    h = np.asarray(h, float)
+    v = 10 + 82.4 * (1 - np.exp(-h / 2.6)) / (1 - np.exp(-10 / 2.6))   # 10 -> 92.4 at 10 h
+    v = np.where(h > 10.0, 92.4 - 0.75 * (h - 10.0), v)                # slow decline in the hold
+    v = np.where(h > 22.5, v - 70 * (h - 22.5), v)
+    return v
+
+
+@dataclass
+class ProbeChart:
+    image: Image.Image
+    plot_left: float
+    plot_right: float
+    y_top: float         # row of the 143° gridline
+    y_bottom: float      # row of the 0° gridline
+
+    def y_px(self, value):
+        return self.y_bottom + np.asarray(value, float) * (self.y_top - self.y_bottom) / PROBE_YMAX
+
+    def hours(self, x_px):
+        return (np.asarray(x_px, float) - self.plot_left) * PROBE_HOURS / (self.plot_right - self.plot_left)
+
+
+def _dashed_h(d, x0, x1, y, fill, width, dash, gap):
+    x = x0
+    while x < x1:
+        d.line([(x, y), (min(x + dash, x1), y)], fill=fill, width=width)
+        x += dash + gap
+
+
+def _dashed_v(d, x, y0, y1, fill, width, dash, gap):
+    y = y0
+    while y < y1:
+        d.line([(x, y), (x, min(y + dash, y1))], fill=fill, width=width)
+        y += dash + gap
+
+
+def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3) -> ProbeChart:
+    W, H = width * scale, height * scale
+    u = width / 582 * scale                     # layout unit: 1 = one pixel of a 582 px wide screen
+    im = Image.new('RGB', (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(im)
+    grey_text, grid = (40, 40, 40), (205, 205, 205)
+    d.text((92 * u, 10 * u), '92.4°C', fill=(10, 10, 10), font=_font(int(20 * u)))
+    d.line([(92 * u, 65 * u), (487 * u, 65 * u)], fill=(238, 238, 238), width=max(1, int(u)))
+    d.text((92 * u, 96 * u), 'Chart', fill=grey_text, font=_font(int(15 * u)))
+    f = _font(int(11 * u))
+    for x, label, colour in ((107, 'Internal', INTERNAL_RGB), (175, 'Target', TARGET_RGB), (236, 'Ambient', AMBIENT_RGB)):
+        d.ellipse([x * u, 138 * u, (x + 7) * u, 145 * u], fill=colour)
+        d.text(((x + 13) * u, 135 * u), label, fill=grey_text, font=f)
+
+    pl, pr, pt, pb = 139 * u, 446 * u, 173 * u, 432 * u
+    lw = max(1, int(1.2 * u))
+    for k in range(7):
+        y = pb + k * (pt - pb) / 6
+        if k == 0:
+            d.line([(pl, y), (pr, y)], fill=grid, width=lw)
+        else:
+            _dashed_h(d, pl, pr, y, grid, lw, 3 * u, 2.5 * u)
+        d.text((131 * u, y), f'{round(PROBE_YMAX * k / 6)}°', fill=grey_text, font=f, anchor='rm')
+    d.line([(pl, pt), (pl, pb)], fill=grid, width=lw)
+    for k in range(1, 7):
+        x = pl + k * (pr - pl) / 6
+        _dashed_v(d, x, pt, pb, grid, lw, 3 * u, 2.5 * u)
+        d.text((x, 440 * u), f'{4 * k}h', fill=grey_text, font=f, anchor='mt')
+
+    hrs = np.linspace(0, PROBE_END, 4000)
+    xs = pl + hrs / PROBE_HOURS * (pr - pl)
+    ypx = lambda v: pb + np.asarray(v) * (pt - pb) / PROBE_YMAX
+    yi = ypx(probe_internal(hrs))
+    # pink fill under the internal line, fading downwards
+    fill = Image.new('RGB', (W, H), (255, 255, 255))
+    grad = Image.linear_gradient('L').resize((W, int(pb - pt)))
+    pink = Image.new('RGB', (W, int(pb - pt)), (247, 222, 222))
+    whiteband = Image.new('RGB', (W, int(pb - pt)), (255, 255, 255))
+    fill.paste(Image.composite(whiteband, pink, grad), (0, int(pt)))
+    mask = Image.new('L', (W, H), 0)
+    ImageDraw.Draw(mask).polygon(list(zip(xs, yi)) + [(xs[-1], pb), (xs[0], pb)], fill=255)
+    im.paste(fill, (0, 0), mask)
+    d = ImageDraw.Draw(im)
+    for k in range(1, 6):                                   # redraw gridlines over the fill
+        y = pb + k * (pt - pb) / 6
+        _dashed_h(d, pl, pr, y, grid, lw, 3 * u, 2.5 * u)
+
+    # dotted prediction lines from the peak
+    peak = (pl + 10 / PROBE_HOURS * (pr - pl), ypx(92.4))
+    for end_v in (75, 62):
+        x0, y0 = peak
+        x1, y1 = pl + 21.5 / PROBE_HOURS * (pr - pl), ypx(end_v)
+        for t in np.arange(0, 1, 0.02):
+            d.ellipse([x0 + (x1 - x0) * t - u * .5, y0 + (y1 - y0) * t - u * .5,
+                       x0 + (x1 - x0) * t + u * .5, y0 + (y1 - y0) * t + u * .5], fill=(185, 185, 185))
+    line_w = max(1, int(1.6 * u))
+    yt = ypx(PROBE_TARGET)
+    d.line([(pl, yt), (pr, yt)], fill=TARGET_RGB, width=line_w)
+    d.polygon([(pl - 3 * u, yt - 4 * u), (pl - 3 * u, yt + 4 * u), (pl + 4 * u, yt)], fill=(40, 200, 40))
+    d.line(list(zip(xs, ypx(probe_ambient(hrs)))), fill=AMBIENT_RGB, width=line_w, joint='curve')
+    d.line(list(zip(xs, yi)), fill=INTERNAL_RGB, width=line_w, joint='curve')
+    d.polygon([(peak[0] - 4 * u, peak[1] - 6 * u), (peak[0] + 4 * u, peak[1] - 6 * u), (peak[0], peak[1])], fill=INTERNAL_RGB)
+
+    ft = _font(int(14 * u))
+    for x, a, b in ((175, 'Target', '100°C'), (289, 'Peak', '92.4°C'), (388, 'Elapsed', '22hr45min')):
+        d.text((x * u, 507 * u), a, fill=(20, 20, 20), font=ft, anchor='mm')
+        d.text((x * u, 530 * u), b, fill=(20, 20, 20), font=_font(int(17 * u)), anchor='mm')
+    d.rounded_rectangle([92 * u, 551 * u, 487 * u, 604 * u], radius=26 * u, fill=(219, 79, 78))
+    d.text((290 * u, 577 * u), 'Cook Again', fill=(255, 255, 255), font=_font(int(17 * u)), anchor='mm')
+
+    small = im.resize((width, height), Image.LANCZOS)
+    s = lambda v: (v + 0.5) / scale - 0.5
+    return ProbeChart(small, s(pl), s(pr), s(pt), s(pb))
