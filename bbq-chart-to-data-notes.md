@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 8 October 2026 for v1.2.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 8 October 2026 for v1.3.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -14,6 +14,13 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
+
+## v1.3.0 (gaps, 8 Oct 2026)
+- Data gaps: the user's second chart has no data from ~10 h to ~22.5 h (the app joins it with grey dotted lines), then a short stretch at the end. trace_line now looks for further pieces of the line in the columns the main path does not use (_best_path run again, up to 4 pieces, each ≥ max(3, 0.4 % of width) columns), so the end stretch is traced.
+- dg.fill_gaps(table): straight-line interpolation in time between the last value before and the first after each gap, per column; nothing added before the first or after the last value. App: toggle "Join gaps with straight lines" (on), filled stretches dotted in the chart, values in table and CSV, optional "Filled" column (Step 6).
+- remove_markers: line width measured from solid pixel runs (the coverage estimate ran low on JPEG and removed real line), square ≥ 5 px, and the whole marker region is removed (its thin edges left a fake bump next to a gap). User chart peak 85.4 °C (app 85.6).
+- Axis notes ("Read 7 labels…", "Read elapsed-time labels…") moved into the (?) of Scale / Times. Headings "Step 1: …" to "Step 6: Export". Suggested file name follows the start time until the user edits it.
+- Replica: make_probe_example(gap=(start, end)).
 
 ## v1.2.0 (layout, 8 Oct 2026)
 - "Created by Imran Abdul Majid" above the version line (AUTHOR in version.py). Less space above the title (CSS padding on stMainBlockContainer).
@@ -48,7 +55,7 @@ Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180�
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (19 tests) and test_chart_text.py (16 tests; skipped without Tesseract).
+- test_digitizer.py (20 tests) and test_chart_text.py (17 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.

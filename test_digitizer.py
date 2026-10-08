@@ -159,6 +159,22 @@ class Markers(unittest.TestCase):
         self.assertIs(dg.remove_markers(cov, 3.0), cov)
 
 
+class GapFill(unittest.TestCase):
+    def test_straight_line_inside_gaps_only(self):
+        import pandas as pd
+        stamps = [(datetime(2026, 6, 21, 18, 0) + timedelta(minutes=k)).strftime(dg.TIME_FORMAT) for k in range(8)]
+        df = pd.DataFrame({'Timestamp': stamps,
+                           'Ambient temperature (°C)': [np.nan, 100, np.nan, np.nan, np.nan, 60, 61, np.nan],
+                           'Meat temperature (°C)': [10, 11, 12, 13, 14, 15, 16, 17]})
+        out, filled = dg.fill_gaps(df)
+        amb = out['Ambient temperature (°C)'].tolist()
+        self.assertTrue(np.isnan(amb[0]) and np.isnan(amb[7]), 'nothing added before the first or after the last value')
+        self.assertEqual(amb[1:7], [100, 90, 80, 70, 60, 61])
+        self.assertEqual(filled['Ambient temperature (°C)'].tolist(), [False, False, True, True, True, False, False, False])
+        self.assertFalse(filled['Meat temperature (°C)'].any())
+        self.assertTrue(np.isnan(df['Ambient temperature (°C)'][2]), 'the input table is not changed')
+
+
 class Roles(unittest.TestCase):
     def test_ambient_is_hotter_at_the_start(self):
         from example_chart import make_probe_example, AMBIENT_RGB, INTERNAL_RGB

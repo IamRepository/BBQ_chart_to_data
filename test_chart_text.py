@@ -149,6 +149,31 @@ class ProbeAppChart(unittest.TestCase):
 
 
 @unittest.skipUnless(ct.available(), 'Tesseract is not installed')
+class ChartWithDataGap(unittest.TestCase):
+    """The app recorded nothing from 10 h to 22.35 h and joins the gap with dotted lines;
+    a short stretch of both lines follows at the end of the cook."""
+
+    def test_gap_filled_on_a_straight_line(self):
+        start, end = 10.0, 22.35
+        ex = make_probe_example(gap=(start, end))
+        df = pipeline(np.asarray(ex.image))
+        last = datetime.strptime(df['Timestamp'].iloc[-1], dg.TIME_FORMAT)
+        self.assertLess(abs((last - (T0 + timedelta(hours=PROBE_END))).total_seconds()), 480,
+                        'the short stretch after the gap is traced')
+        h = np.arange(len(df)) / 60
+        gap = (h > start + 0.1) & (h < end - 0.1)
+        for col, fn in (('Ambient temperature (°C)', probe_ambient), ('Meat temperature (°C)', probe_internal)):
+            self.assertTrue(df[col][gap].isna().all(), 'nothing is read inside the gap')
+            filled, mask = dg.fill_gaps(df)
+            v = filled[col].to_numpy()
+            self.assertTrue(np.isfinite(v[gap]).all(), col + ': gap filled')
+            # on the straight line between the values either side of the gap
+            line = np.interp(h[gap], [start, end], [fn(start), fn(end)])
+            self.assertLess(float(np.abs(v[gap] - line).max()), 2.0, col)
+            self.assertTrue(mask[col][gap].all())
+
+
+@unittest.skipUnless(ct.available(), 'Tesseract is not installed')
 class ClockChart(unittest.TestCase):
     def test_clock_labels_past_midnight(self):
         for dark in (False, True):

@@ -42,7 +42,8 @@ IMAGE_KEYS = ('y_mode', 'y1_sel', 'y1_px', 'y1_val', 'y2_sel', 'y2_px', 'y2_val'
               'x_mode', 'x1_sel', 'x1_px', 'x1_date', 'x1_time', 'x2_sel', 'x2_px', 'x2_date', 'x2_time',
               'start_date', 'start_time', 'label_date', 'start_touched', 'manual_touched', 'date_applied',
               'amb_sel', 'amb_hex', 'meat_sel', 'meat_hex',
-              'area_l', 'area_t', 'area_r', 'area_b', 'y_prefilled', 'assign_note')
+              'area_l', 'area_t', 'area_r', 'area_b', 'y_prefilled', 'assign_note',
+              'file_name', 'file_name_auto', 'file_name_edited')
 EXAMPLES = {'probe': ('Probe app', 'A phone probe app chart with elapsed hours (4h, 8h, …) and a legend'),
             'clock': ('Clock times', 'A chart with clock times on the time axis (18:00, 20:00, …)')}
 
@@ -209,7 +210,7 @@ st.title(APP_NAME)
 st.markdown(f'<p class="bcd-byline">Created by {AUTHOR}</p>', unsafe_allow_html=True)
 st.caption(f'Version {VERSION} · Screenshot of a temperature chart → table of ambient and meat temperatures → CSV')
 
-st.subheader('1. Screenshot')
+st.subheader('Step 1: Screenshot')
 with st.container(border=True):
     up_col, ex_col = st.columns([3, 2], vertical_alignment='bottom', gap='medium')
     uploaded = up_col.file_uploader('Upload a screenshot of the chart', type=['png', 'jpg', 'jpeg', 'webp'],
@@ -275,21 +276,23 @@ with right:
                 'packages.txt installs it.')
 
     # ---- temperature axis
-    st.subheader('2. Temperature axis')
+    st.subheader('Step 2: Temperature axis')
     y_modes = [FROM_LABELS, Y_MANUAL] if yfit.ok else [Y_MANUAL]
     if st.session_state.get('y_mode') not in y_modes:
         st.session_state.y_mode = y_modes[0]
-    y_mode = st.segmented_control('Scale', y_modes, key='y_mode') or y_modes[0]
-    if y_mode == FROM_LABELS:
+    y_help = None
+    if yfit.ok:
         used = yfit.used
         rejected = [l for l in yfit.labels if not l.used]
         top_v, bot_v = float(yfit.value(layout.plot.top)), float(yfit.value(layout.plot.bottom))
-        st.caption(f'Read {len(used)} labels: **{fmt_list([l.text + "°" for l in sorted(used, key=lambda l: -l.value)])}**. '
-                   f'Top gridline = {top_v:.1f}°, bottom = {bot_v:.1f}°; '
-                   f'{abs(yfit.slope):.2f}° per pixel.'
-                   + (f' All labels fit one straight scale within {yfit.residual:.1f}°.'
-                      if yfit.residual >= 0.05 else '')
-                   + (f' Not used (unreadable): {len(rejected)}.' if rejected else ''))
+        y_help = (f'Read {len(used)} labels: **{fmt_list([l.text + "°" for l in sorted(used, key=lambda l: -l.value)])}**. '
+                  f'Top gridline = {top_v:.1f}°, bottom = {bot_v:.1f}°; {abs(yfit.slope):.2f}° per pixel.'
+                  + (f' All labels fit one straight scale within {yfit.residual:.1f}°.'
+                     if yfit.residual >= 0.05 else '')
+                  + (f' Not used (unreadable): {len(rejected)}.' if rejected else ''))
+    y_mode = st.segmented_control('Scale', y_modes, key='y_mode', help=y_help) or y_modes[0]
+    if y_mode == FROM_LABELS:
+        used = yfit.used
         lo, hi = min(used, key=lambda l: l.pos), max(used, key=lambda l: l.pos)
         y1, v1, y2, v2 = lo.pos, float(yfit.value(lo.pos)), hi.pos, float(yfit.value(hi.pos))
         y_refs = [(l.pos, f'{l.value:g}°') for l in used]
@@ -318,18 +321,25 @@ with right:
         y_refs = [(y1, f'{v1:g}°'), (y2, f'{v2:g}°')]
 
     # ---- time axis
-    st.subheader('3. Time axis')
+    st.subheader('Step 3: Time axis')
     x_modes = [FROM_LABELS, X_MANUAL] if xfit.ok else [X_MANUAL]
     if st.session_state.get('x_mode') not in x_modes:
         st.session_state.x_mode = x_modes[0]
-    x_mode = st.segmented_control('Times', x_modes, key='x_mode') or x_modes[0]
+    x_help = None
+    if xfit.ok:
+        x_used = sorted(xfit.used, key=lambda l: l.pos)
+        if xfit.kind == 'elapsed':
+            x_help = (f'Read elapsed-time labels: **{fmt_list([l.text for l in x_used])}**. '
+                      f'0 h is at column {float(xfit.pos(0)):.1f}; {abs(1 / xfit.slope):.1f} pixels per hour.')
+        else:
+            x_help = (f'Read clock-time labels: **{fmt_list([l.text for l in x_used])}**'
+                      + (' (the chart runs past midnight)' if x_used[-1].value >= 24 else '') + '.')
+    x_mode = st.segmented_control('Times', x_modes, key='x_mode', help=x_help) or x_modes[0]
     anchor = None
     start_needed = False
     if x_mode == FROM_LABELS and xfit.kind == 'elapsed':
         used = sorted(xfit.used, key=lambda l: l.pos)
         zero = float(xfit.pos(0))
-        st.caption(f'Read elapsed-time labels: **{fmt_list([l.text for l in used])}**. '
-                   f'0 h is at column {zero:.1f}; {abs(1 / xfit.slope) * 1:.1f} pixels per hour.')
         c1, c2 = st.columns(2)
         c1.date_input('Start date', key='start_date', format='DD/MM/YYYY',
                       on_change=touched, args=('start_touched',))
@@ -345,8 +355,6 @@ with right:
         x_refs = [(l.pos, l.text) for l in used]
     elif x_mode == FROM_LABELS:                       # clock times
         used = sorted(xfit.used, key=lambda l: l.pos)
-        st.caption(f'Read clock-time labels: **{fmt_list([l.text for l in used])}**'
-                   + (' (the chart runs past midnight)' if used[-1].value >= 24 else '') + '.')
         st.date_input(f'Date at {used[0].text}', key='label_date', format='DD/MM/YYYY',
                       on_change=touched, args=('start_touched',))
         midnight = datetime.combine(st.session_state.label_date, time(0, 0))
@@ -385,7 +393,7 @@ with right:
         x_refs = [(x1, t1.strftime('%H:%M')), (x2, t2.strftime('%H:%M'))]
 
     # ---- lines
-    st.subheader('4. Lines')
+    st.subheader('Step 4: Lines')
     with st.expander('Search area and tracing settings'):
         st.caption('The dashed box on the picture is where lines are searched for. Keep titles and legends '
                    'outside it if they use the same colours as the lines.')
@@ -535,13 +543,13 @@ if problems:
 # --------------------------------------------------------------------------- results
 
 st.divider()
-st.subheader('5. Data')
+st.subheader('Step 5: Data')
 if start_needed:
-    st.warning((f'Set the start time (step 3). The date {cook_date:%d/%m/%Y} was read from the screenshot; the '
+    st.warning((f'Set the start time (Step 3). The date {cook_date:%d/%m/%Y} was read from the screenshot; the '
                 'time is a placeholder until you set it.' if cook_date else
-                'Set the start date and time (step 3); the timestamps below use a placeholder date and time.')
+                'Set the start date and time (Step 3); the timestamps below use a placeholder date and time.')
                if x_mode == FROM_LABELS else
-               'Check the axis values and times in steps 2 and 3; they are still at their starting values.')
+               'Check the axis values and times in Steps 2 and 3; they are still at their starting values.')
 precision = (f'Lines are read to a fraction of a pixel from the anti-aliased edges, so on a clean screenshot '
              f'each value is typically within ±{max(0.3 * cal.degrees_per_px, 0.05):.1f} {unit} of the drawn line.')
 m = st.columns(4)
@@ -559,11 +567,14 @@ for i, label in enumerate(SERIES):
 o1, o2 = st.columns([2, 3], vertical_alignment='bottom')
 interval_name = o1.selectbox('Time step between rows', list(INTERVALS), index=0, key='interval',
                              help='How often the table has a row. Values are interpolated between pixel columns '
-                                  'onto a regular clock that starts at the start time.')
+                                  'onto a regular clock that starts at the start time. The screenshot has one '
+                                  f'pixel column every {cal.seconds_per_px:.0f} s.')
 interval = INTERVALS[interval_name]
-if interval and cal.seconds_per_px > 3 * interval:
-    o2.caption(f'The screenshot has one column every {cal.seconds_per_px:.0f} s, so rows this close together '
-               'are interpolated between columns.')
+fill = o2.toggle('Join gaps with straight lines', value=True, key='fill_gaps',
+                 help='Where the app recorded nothing (a gap in the chart, often drawn as a dotted line), fill the '
+                      'missing values on a straight line between the last value before and the first value after '
+                      'the gap, like the dotted line. Shown dotted in the chart below and included in the table '
+                      'and the CSV. Nothing is added before the first or after the last value of a line.')
 
 series = {}
 for label in SERIES:
@@ -579,17 +590,33 @@ else:
 if table.empty:
     st.warning('No values were found. Check the line colours and the search area.')
     st.stop()
+measured = table
+if fill:
+    table, filled = dg.fill_gaps(measured)
+else:
+    filled = None
+n_filled = 0 if filled is None else int(filled.any(axis=1).sum())
 
 chart = go.Figure()
 times = [datetime.strptime(t[:16], dg.TIME_FORMAT) + timedelta(seconds=int(t[17:19]) if len(t) > 16 else 0)
          for t in table['Timestamp']]
 for label, rgb in zip(SERIES, (picked[s] for s in SERIES)):
     col = f'{label} ({unit})'
-    if rgb is None or table[col].isna().all():
+    if rgb is None or measured[col].isna().all():
         continue
-    chart.add_trace(go.Scatter(x=times, y=table[col], mode='lines', name=label, connectgaps=False,
-                               line=dict(color='#%02x%02x%02x' % tuple(int(v) for v in rgb), width=2),
+    colour = '#%02x%02x%02x' % tuple(int(v) for v in rgb)
+    chart.add_trace(go.Scatter(x=times, y=measured[col], mode='lines', name=label, connectgaps=False,
+                               line=dict(color=colour, width=2), legendgroup=label,
                                hovertemplate='%{x|%d/%m/%Y %H:%M}<br>%{y:.1f} ' + unit + '<extra>' + label + '</extra>'))
+    if filled is not None and filled[col].any():
+        # the filled stretches, dotted, joined to the measured values either side
+        f = filled[col].to_numpy()
+        edge = f | np.r_[f[1:], False] | np.r_[False, f[:-1]]
+        chart.add_trace(go.Scatter(x=times, y=table[col].where(edge), mode='lines', connectgaps=False,
+                                   name=f'{label} (gap filled)', legendgroup=label,
+                                   line=dict(color=colour, width=2, dash='dot'),
+                                   hovertemplate='%{x|%d/%m/%Y %H:%M}<br>%{y:.1f} ' + unit
+                                                 + '<extra>' + label + ', filled</extra>'))
 chart.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10), hovermode='x unified',
                     legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
                     yaxis_title=f'Temperature ({unit})', xaxis=dict(tickformat='%H:%M\n%d/%m'))
@@ -599,15 +626,34 @@ centred = {c: (st.column_config.TextColumn(c, alignment='center') if c == 'Times
                 st.column_config.NumberColumn(c, alignment='center', format='%.1f' if interval else '%.2f'))
            for c in table.columns}
 st.dataframe(table, width='stretch', hide_index=True, height=320, column_config=centred)
+if n_filled:
+    st.caption(f'{n_filled} rows have values filled across gaps (dotted in the chart).')
+
+st.divider()
+st.subheader('Step 6: Export')
+export = table
+if filled is not None and n_filled:
+    if st.checkbox('Add a column that marks filled values', key='mark_filled',
+                   help='Adds a fourth column, "Filled", naming the lines whose value in that row was filled '
+                        'across a gap rather than read from the chart.'):
+        names = {f'{l} ({unit})': l.split()[0] for l in SERIES}
+        export = table.copy()
+        export['Filled'] = [' + '.join(names[c] for c in filled.columns[1:] if row[c])
+                            for _, row in filled.iterrows()]
 first = times[0]
 default_name = f'chart_data_{first:%Y-%m-%d_%H%M}'
 d1, d2 = st.columns([3, 1], vertical_alignment='bottom')
-name = d1.text_input('File name', value=default_name, key=f'file_name_{digest[:8]}',
+# the suggested name follows the start time until the user types a name of their own
+if st.session_state.get('file_name_auto') != default_name and not st.session_state.get('file_name_edited'):
+    st.session_state.file_name = default_name
+    st.session_state.file_name_auto = default_name
+name = d1.text_input('File name', key='file_name', on_change=touched, args=('file_name_edited',),
                      help='Name of the CSV file to save. ".csv" is added if you leave it out.')
 name = ''.join(ch for ch in name.strip() if ch not in '\\/:*?"<>|') or default_name
 if not name.lower().endswith('.csv'):
     name += '.csv'
-d2.download_button('Download CSV', dg.to_csv_bytes(table), file_name=name,
+d2.download_button('Download CSV', dg.to_csv_bytes(export), file_name=name,
                    mime='text/csv', type='primary', icon=':material/download:', width='stretch')
-st.caption(f'{len(table)} rows from {table["Timestamp"].iloc[0]} to {table["Timestamp"].iloc[-1]}. '
-           'Timestamps are day/month/year. Empty cells are gaps where the line was not visible.')
+st.caption(f'{len(export)} rows from {export["Timestamp"].iloc[0]} to {export["Timestamp"].iloc[-1]}. '
+           'Timestamps are day/month/year.'
+           + (' Empty cells are gaps where the line was not visible.' if export.iloc[:, 1:3].isna().any().any() else ''))

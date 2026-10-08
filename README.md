@@ -17,7 +17,8 @@ Timestamps are day/month/year. The CSV imports straight into the Cook Profile Da
    - Clock times (18:00, 20:00, …): give the date of the first label; charts that run past midnight are handled.
    - Or switch to *Two reference points* and give the date and time at two places on the axis.
 4. **Lines**: the legend words decide which colour is which (Internal/Meat/Probe → meat, Ambient/Pit/Grill/Smoker → ambient). A flat line, such as a target or setpoint, is never used. Without a legend, ambient is the line that is hotter at the start of the cook. You can change either line, or pick *Custom colour*.
-5. **Data**: check that the thin traced lines sit on the curves in the screenshot, choose the row interval (every minute by default) and download the CSV.
+5. **Data**: check that the thin traced lines sit on the curves in the screenshot and choose the time step between rows (every minute by default). Where the app recorded nothing (a gap, often drawn dotted), *Join gaps with straight lines* fills the values on a straight line across the gap; filled stretches are dotted in the chart.
+6. **Export**: name the file and download the CSV. Optionally add a column marking the filled values.
 
 Hover over the screenshot to read pixel positions; drag to zoom in. *Search area and tracing settings* has the box the lines are searched in, the colour tolerance, gap bridging, a top-edge option for charts with a filled area under the line, and optional smoothing.
 
@@ -29,7 +30,7 @@ Hover over the screenshot to read pixel positions; drag to zoom in. *Search area
 - **Lines** are traced one pixel column at a time. Anti-aliased edge pixels are a blend of the line colour and the background; how much of each pixel is line colour gives the centre of the line to a fraction of a pixel. Pale lines (such as lavender) are found too. Each pixel is given to the line colour that explains it best, so similar colours (a pale ambient line next to a purple target line) and grey gridlines do not mix. Where an app shades the area under one line translucently, a line running inside that shading changes shade; the two shades are recognised as one line and traced throughout.
 - **Markers** drawn on a line in its colour (a peak triangle, dots) are removed before tracing; the line is bridged across them.
 - **One continuous path** is chosen through the columns, so legend text, labels and other lines are skipped. Short gaps are bridged; longer gaps stay empty.
-- **Rows** are interpolated onto a regular clock that starts at the start time. Where the app recorded nothing (a gap in the chart), the rows stay with empty cells. *Every pixel column* gives the raw resolution with seconds in the timestamp.
+- **Rows** are interpolated onto a regular clock that starts at the start time. Where the app recorded nothing (a gap in the chart), the rows stay, and are either filled on a straight line across the gap (default) or left empty. Pieces of a line after a long gap are traced too. *Every pixel column* gives the raw resolution with seconds in the timestamp.
 
 Accuracy on the test charts, per minute, against the curves they were drawn from: mean error 0.07–0.2 °C for a replica of a phone probe app (1080 px wide, 582 px wide, and JPEG). Errors are larger only where the curve jumps within one pixel column (lid openings) or under markers drawn on the line. Rounded axis labels (143 for 143.3) add up to about 0.3 °C.
 

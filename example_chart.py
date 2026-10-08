@@ -173,7 +173,8 @@ def _dashed_v(d, x, y0, y1, fill, width, dash, gap):
         y += dash + gap
 
 
-def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3) -> ProbeChart:
+def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3, gap=None) -> ProbeChart:
+    """gap: (start h, end h) with no recorded data; the app joins it with grey dotted lines."""
     W, H = width * scale, height * scale
     u = width / 582 * scale                     # layout unit: 1 = one pixel of a 582 px wide screen
     im = Image.new('RGB', (W, H), (255, 255, 255))
@@ -206,11 +207,17 @@ def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3) ->
     xs = pl + hrs / PROBE_HOURS * (pr - pl)
     ypx = lambda v: pb + np.asarray(v) * (pt - pb) / PROBE_YMAX
     yi = ypx(probe_internal(hrs))
-    # dotted prediction lines from the peak
+    xh = lambda h: pl + h / PROBE_HOURS * (pr - pl)
+    if gap:
+        parts = [hrs <= gap[0], hrs >= gap[1]]
+        # dotted connectors across the gap, as the app draws them
+        dots = [((xh(gap[0]), ypx(fn(gap[0]))), (xh(gap[1]), ypx(fn(gap[1]))))
+                for fn in (probe_internal, probe_ambient)]
+    else:
+        parts = [np.ones(hrs.size, bool)]
+        dots = [((xh(10), ypx(92.4)), (xh(21.5), ypx(v))) for v in (75, 62)]   # prediction lines
     peak = (pl + 10 / PROBE_HOURS * (pr - pl), ypx(92.4))
-    for end_v in (75, 62):
-        x0, y0 = peak
-        x1, y1 = pl + 21.5 / PROBE_HOURS * (pr - pl), ypx(end_v)
+    for (x0, y0), (x1, y1) in dots:
         for t in np.arange(0, 1, 0.02):
             d.ellipse([x0 + (x1 - x0) * t - u * .5, y0 + (y1 - y0) * t - u * .5,
                        x0 + (x1 - x0) * t + u * .5, y0 + (y1 - y0) * t + u * .5], fill=(185, 185, 185))
@@ -218,20 +225,23 @@ def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3) ->
     yt = ypx(PROBE_TARGET)
     d.line([(pl, yt), (pr, yt)], fill=TARGET_RGB, width=line_w)
     d.polygon([(pl - 3 * u, yt - 4 * u), (pl - 3 * u, yt + 4 * u), (pl + 4 * u, yt)], fill=(40, 200, 40))
-    d.line(list(zip(xs, ypx(probe_ambient(hrs)))), fill=AMBIENT_RGB, width=line_w, joint='curve')
+    for part in parts:
+        d.line(list(zip(xs[part], ypx(probe_ambient(hrs[part])))), fill=AMBIENT_RGB, width=line_w, joint='curve')
     # translucent red shading under the internal line, drawn over everything
     # beneath it (as the app does): the ambient line inside it turns from
     # #9ba5fa to about #a49ee7
     alpha = np.zeros((H, W), np.float32)
     alpha[int(pt):int(pb)] = np.linspace(0.16, 0.03, int(pb) - int(pt))[:, None]
     mask = Image.new('L', (W, H), 0)
-    ImageDraw.Draw(mask).polygon(list(zip(xs, yi)) + [(xs[-1], pb), (xs[0], pb)], fill=255)
+    for part in parts:
+        ImageDraw.Draw(mask).polygon(list(zip(xs[part], yi[part])) + [(xs[part][-1], pb), (xs[part][0], pb)], fill=255)
     a_map = (alpha * (np.asarray(mask, np.float32) / 255))[..., None]
     arr = np.asarray(im, np.float32)
     arr = arr * (1 - a_map) + np.array(INTERNAL_RGB, np.float32) * a_map
     im = Image.fromarray(np.clip(arr + 0.5, 0, 255).astype(np.uint8))
     d = ImageDraw.Draw(im)
-    d.line(list(zip(xs, yi)), fill=INTERNAL_RGB, width=line_w, joint='curve')
+    for part in parts:
+        d.line(list(zip(xs[part], yi[part])), fill=INTERNAL_RGB, width=line_w, joint='curve')
     d.polygon([(peak[0] - 4 * u, peak[1] - 6 * u), (peak[0] + 4 * u, peak[1] - 6 * u), (peak[0], peak[1])], fill=INTERNAL_RGB)
 
     ft = _font(int(14 * u))

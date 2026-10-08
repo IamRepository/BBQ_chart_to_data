@@ -543,43 +543,27 @@ def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
     height = B - T + 1
     reward = np.where(height > 6 * thick + 4, reward * 0.6, reward)
 
-    K = max(40, min(W // 3, 400))      # longest gap that can be bridged in the path
-    SKIP, SKIP_CAP, BETA = 0.25, 4.0, 45.0 / H
-    score = np.zeros(n)
-    prev = np.full(n, -1)
-    col_start = np.searchsorted(X, np.arange(W + 1))
-    for x in range(W):
-        i0, i1 = col_start[x], col_start[x + 1]
-        if i0 == i1:
-            continue
-        j0 = col_start[max(0, x - K)]
-        j1 = i0
-        if j1 > j0:
-            gap = x - X[j0:j1]
-            ti = T[i0:i1, None]; bi = B[i0:i1, None]
-            tj = T[None, j0:j1]; bj = B[None, j0:j1]
-            dist = np.maximum(0, np.maximum(ti - bj, tj - bi) - 1)
-            dist = np.maximum(0, dist - 2 * (gap[None, :] - 1))
-            cost = np.minimum(SKIP * (gap - 1), SKIP_CAP)[None, :] + BETA * dist
-            total = score[None, j0:j1] - cost
-            best = total.argmax(axis=1)
-            bestv = total[np.arange(i1 - i0), best]
-            use = bestv > 0
-            score[i0:i1] = reward[i0:i1] + np.where(use, bestv, 0)
-            prev[i0:i1] = np.where(use, best + j0, -1)
-        else:
-            score[i0:i1] = reward[i0:i1]
+    path = _best_path(X, T, B, reward, W, H)
+    path = _prune_islands(path, X, T, B, C, thick, H)     # legend text etc.
 
-    # back-track the best path
-    k = int(score.argmax())
-    path = []
-    while k >= 0:
-        path.append(k)
-        k = int(prev[k])
-    path = path[::-1]
-
-    # drop short islands that sit far from their neighbours (legend text etc.)
-    path = _prune_islands(path, X, T, B, C, thick, H)
+    # Pieces of the line separated from the main path by a long gap (the app
+    # recorded nothing for hours, then a short stretch at the end of the cook)
+    # are found in the columns the main path does not use.
+    covered = np.zeros(W, bool)
+    covered[X[path]] = True
+    min_cols = max(3, int(0.004 * W))
+    for _ in range(4):
+        free = np.flatnonzero(~covered[X])
+        if free.size < min_cols:
+            break
+        sub = _best_path(X[free], T[free], B[free], reward[free], W, H)
+        piece = [int(free[k]) for k in sub]
+        cols = np.unique(X[piece])
+        if cols.size < min_cols or reward[piece].sum() < 3 or reward[piece].mean() < 0.5:
+            break
+        path = sorted(path + piece, key=lambda k: X[k])
+        covered[cols] = True
+        covered[X[free][np.isin(X[free], cols)]] = True
 
     y = np.full(W, np.nan)
     found = np.zeros(W, bool)
@@ -613,6 +597,80 @@ def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
     return Trace(xs, y + area.top, found, thick, float(found.sum() / span))
 
 
+def _best_path(X, T, B, reward, W, H):
+    """Dynamic programming: the chain of column runs with the highest total reward.
+
+    Moving between runs costs for skipped columns (capped) and for the vertical
+    distance between runs that do not touch.
+    """
+    n = len(X)
+    if n == 0:
+        return []
+    K = max(40, min(W // 3, 400))      # longest gap that can be bridged in the path
+    SKIP, SKIP_CAP, BETA = 0.25, 4.0, 45.0 / H
+    score = np.zeros(n)
+    prev = np.full(n, -1)
+    col_start = np.searchsorted(X, np.arange(W + 1))
+    for x in range(W):
+        i0, i1 = col_start[x], col_start[x + 1]
+        if i0 == i1:
+            continue
+        j0 = col_start[max(0, x - K)]
+        j1 = i0
+        if j1 > j0:
+            gap = x - X[j0:j1]
+            ti = T[i0:i1, None]; bi = B[i0:i1, None]
+            tj = T[None, j0:j1]; bj = B[None, j0:j1]
+            dist = np.maximum(0, np.maximum(ti - bj, tj - bi) - 1)
+            dist = np.maximum(0, dist - 2 * (gap[None, :] - 1))
+            cost = np.minimum(SKIP * (gap - 1), SKIP_CAP)[None, :] + BETA * dist
+            total = score[None, j0:j1] - cost
+            best = total.argmax(axis=1)
+            bestv = total[np.arange(i1 - i0), best]
+            use = bestv > 0
+            score[i0:i1] = reward[i0:i1] + np.where(use, bestv, 0)
+            prev[i0:i1] = np.where(use, best + j0, -1)
+        else:
+            score[i0:i1] = reward[i0:i1]
+    k = int(score.argmax())
+    path = []
+    while k >= 0:
+        path.append(k)
+        k = int(prev[k])
+    return path[::-1]
+
+
+def fill_gaps(df: pd.DataFrame):
+    """Join gaps inside each column with straight lines in time.
+
+    Like the dotted lines a probe app draws where it recorded nothing. Only
+    gaps between two measured values are filled; nothing is added before the
+    first or after the last value of a line. Returns (filled table, mask of
+    the cells that were filled).
+    """
+    out = df.copy()
+    filled = pd.DataFrame(False, index=df.index, columns=df.columns)
+    if df.empty:
+        return out, filled
+    fmt = TIME_FORMAT + (':%S' if len(str(df['Timestamp'].iloc[0])) > 16 else '')
+    t = pd.to_datetime(df['Timestamp'], format=fmt).astype('int64').to_numpy() / 1e9
+    for col in df.columns[1:]:
+        v = df[col].to_numpy(dtype=float, copy=True)
+        ok = ~np.isnan(v)
+        if ok.sum() < 2:
+            continue
+        idx = np.flatnonzero(ok)
+        inside = np.zeros(len(v), bool)
+        inside[idx[0]:idx[-1] + 1] = True
+        gap = inside & ~ok
+        if gap.any():
+            decimals = 2 if len(str(df['Timestamp'].iloc[0])) > 16 else 1
+            v[gap] = np.round(np.interp(t[gap], t[ok], v[ok]), decimals)
+            out[col] = v
+            filled[col] = gap
+    return out, filled
+
+
 def _box_any(mask: np.ndarray, s: int, forward: bool) -> np.ndarray:
     """Count of True in the s x s window starting (forward) or ending (backward) at each pixel."""
     c = np.pad(mask.astype(np.int32), ((1, s), (1, s))).cumsum(0).cumsum(1)
@@ -633,19 +691,25 @@ def remove_markers(cov: np.ndarray, thick: float, max_share: float = 0.01) -> np
     (the same object) when there is nothing to remove.
     """
     mask = cov >= 0.5
-    side = int(np.ceil(1.8 * thick)) + 1
-    side = max(side, 4)
+    # line width from the pixels themselves (the coverage-based estimate runs
+    # low on blurred screenshots): median height of the solid runs per column
+    runs = []
+    for x in range(0, mask.shape[1], max(1, mask.shape[1] // 300)):
+        col = np.flatnonzero(mask[:, x])
+        if col.size:
+            breaks = np.flatnonzero(np.diff(col) > 1)
+            runs.extend(np.diff(np.r_[-1, breaks, col.size - 1]))
+    width = max(thick, float(np.median(runs)) if runs else thick)
+    side = max(int(np.ceil(1.8 * width)) + 1, 5)
     full = _box_any(mask, side, forward=True) >= side * side
     if not full.any():
         return cov
     blob = _box_any(full, side, forward=False) > 0
     if blob.sum() > max(max_share * mask.size, 25 * side * side):
         return cov                      # a filled area, not a marker
-    grown = blob.copy()
-    for dy in (-2, -1, 1, 2):
-        grown |= np.roll(blob, dy, axis=0)
-    for dx in (-2, -1, 1, 2):
-        grown |= np.roll(blob, dx, axis=1)
+    # the marker's thin edges and tip (narrower than the square) go too
+    reach = side // 2 + 2
+    grown = _box_any(_box_any(blob, reach, forward=True) > 0, reach, forward=False) > 0
     out = cov.copy()
     out[grown] = 0
     return out
