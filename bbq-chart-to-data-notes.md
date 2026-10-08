@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 8 October 2026 for v1.1.2. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 8 October 2026 for v1.2.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -14,6 +14,15 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
+
+## v1.2.0 (layout, 8 Oct 2026)
+- "Created by Imran Abdul Majid" above the version line (AUTHOR in version.py). Less space above the title (CSS padding on stMainBlockContainer).
+- Step 1 in a frame: uploader beside "Or try an example" with two short buttons side by side (Probe app, Clock times; descriptions in tooltips).
+- Screenshot panel and steps 2-4 each in a bordered container.
+- Metrics: bordered, value only ("88 %"); explanations in the (?) help; values scale with the window (CSS clamp) so nothing is cut off. Checked at 1600, 1150 and 820 px wide.
+- "Rows" renamed "Time step between rows". Table values centred (column_config alignment).
+- File name box next to Download CSV; ".csv" added if missing, characters not allowed in file names removed.
+- Line names shortened (legend word + colour name) so they fit narrow windows.
 
 ## v1.1.2 (checked on the user's original screenshot, 8 Oct 2026)
 Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180° step 30, 4h-24h, no data 16.5-19.5 h, app peak 85.6 °C) runs through: all 7 temperature labels and 6 time labels read, legend assigns Internal/Ambient, target ignored, ambient traced inside the shading (no second shade needed on this one). Fixes:

@@ -20,7 +20,7 @@ import streamlit as st
 import chart_text as ct
 import digitizer as dg
 from example_chart import START as EX_START, make_example, make_probe_example
-from version import VERSION
+from version import AUTHOR, VERSION
 
 APP_NAME = 'BBQ Chart to Data'
 SERIES = ('Ambient temperature', 'Meat temperature')
@@ -43,12 +43,24 @@ IMAGE_KEYS = ('y_mode', 'y1_sel', 'y1_px', 'y1_val', 'y2_sel', 'y2_px', 'y2_val'
               'start_date', 'start_time', 'label_date', 'start_touched', 'manual_touched', 'date_applied',
               'amb_sel', 'amb_hex', 'meat_sel', 'meat_hex',
               'area_l', 'area_t', 'area_r', 'area_b', 'y_prefilled', 'assign_note')
-EXAMPLES = {'probe': 'Example: probe app (elapsed hours)', 'clock': 'Example: clock times'}
+EXAMPLES = {'probe': ('Probe app', 'A phone probe app chart with elapsed hours (4h, 8h, …) and a legend'),
+            'clock': ('Clock times', 'A chart with clock times on the time axis (18:00, 20:00, …)')}
 
 st.set_page_config(page_title=APP_NAME, page_icon='📈', layout='wide')
 st.markdown("""<style>
 .bcd-chip{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;font-size:.9rem}
 .bcd-chip span.sw{width:16px;height:16px;border-radius:3px;border:1px solid rgba(128,128,128,.5);display:inline-block}
+/* less empty space above the title */
+[data-testid="stMainBlockContainer"], .block-container{padding-top:2.2rem !important}
+h1{padding-top:0 !important}
+.bcd-byline{font-size:.95rem;opacity:.8;margin:-.6rem 0 0 0}
+.bcd-label{font-size:.875rem;margin-bottom:.45rem}
+/* metric values shrink with the window instead of being cut off */
+[data-testid="stMetricValue"]{font-size:clamp(1.25rem, 2.1vw, 2rem) !important}
+[data-testid="stMetricValue"] > div{overflow:visible !important;text-overflow:clip !important;white-space:nowrap}
+[data-testid="stMetricLabel"] p{white-space:normal !important}
+/* button labels wrap rather than being cut off */
+.stButton button p, .stDownloadButton button p{white-space:normal !important}
 </style>""", unsafe_allow_html=True)
 
 
@@ -194,16 +206,21 @@ def overlay_figure(data: bytes, img, area, y_refs, x_refs, traces, colours) -> g
 # --------------------------------------------------------------------------- page
 
 st.title(APP_NAME)
+st.markdown(f'<p class="bcd-byline">Created by {AUTHOR}</p>', unsafe_allow_html=True)
 st.caption(f'Version {VERSION} · Screenshot of a temperature chart → table of ambient and meat temperatures → CSV')
 
 st.subheader('1. Screenshot')
-up_col, ex_col = st.columns([3, 1], vertical_alignment='bottom')
-uploaded = up_col.file_uploader('Upload a screenshot of the chart', type=['png', 'jpg', 'jpeg', 'webp'],
-                                help='Use the original screenshot from your phone (PNG if possible). Cropping is '
-                                     'fine; resizing or re-compressing loses detail.')
-for which, label in EXAMPLES.items():
-    if ex_col.button(label, width='stretch', key='ex_' + which):
-        st.session_state.example = which
+with st.container(border=True):
+    up_col, ex_col = st.columns([3, 2], vertical_alignment='bottom', gap='medium')
+    uploaded = up_col.file_uploader('Upload a screenshot of the chart', type=['png', 'jpg', 'jpeg', 'webp'],
+                                    help='Use the original screenshot from your phone (PNG if possible). Cropping is '
+                                         'fine; resizing or re-compressing loses detail.')
+    with ex_col:
+        st.markdown('<p class="bcd-label">Or try an example</p>', unsafe_allow_html=True)
+        b1, b2 = st.columns(2)
+        for col, (which, (label, tip)) in zip((b1, b2), EXAMPLES.items()):
+            if col.button(label, width='stretch', key='ex_' + which, help=tip, icon=':material/image:'):
+                st.session_state.example = which
 if uploaded is not None:
     st.session_state.example = None
     data = uploaded.getvalue()
@@ -242,7 +259,10 @@ if cook_date and not st.session_state.get('date_applied'):
 bg = tuple(float(v) for v in layout.background)
 unit = st.session_state.get('unit', '°C')
 
-left, right = st.columns([3, 2], gap='large')
+left_col, right_col = st.columns([3, 2], gap='medium')
+left = left_col.container(border=True)
+right = right_col.container(border=True)
+left.markdown('**Screenshot and what the app read**')
 figure_slot = left.empty()
 left.caption('Drag on the picture to zoom in, double-click to zoom out. Hover to read pixel positions. '
              'Pink dotted lines are the axis values the app uses; the thin lines drawn over the curves are '
@@ -409,13 +429,14 @@ with right:
         medians[i] = np.nanmedian(tr.y) if np.isfinite(tr.y).any() else np.inf
 
     def cand_name(i, c):
-        bits = [f'Colour {i + 1}: {dg.colour_name(c.rgb)} ({c.hex})']
         if i in role_of_cand:
-            bits.append(f'legend “{role_of_cand[i].word}”')
+            bits = [f'{i + 1}: “{role_of_cand[i].word}” ({dg.colour_name(c.rgb)})']
+        else:
+            bits = [f'{i + 1}: {dg.colour_name(c.rgb)} ({c.hex})']
         if c.variants:
             bits.append(f'+{len(c.variants)} shade' + ('s' if len(c.variants) > 1 else ''))
         if flat[i]:
-            bits.append('flat line')
+            bits.append('flat')
         return ' · '.join(bits)
 
     names = [cand_name(i, c) for i, c in enumerate(cands)] + [CUSTOM, NONE]
@@ -521,22 +542,24 @@ if start_needed:
                 'Set the start date and time (step 3); the timestamps below use a placeholder date and time.')
                if x_mode == FROM_LABELS else
                'Check the axis values and times in steps 2 and 3; they are still at their starting values.')
+precision = (f'Lines are read to a fraction of a pixel from the anti-aliased edges, so on a clean screenshot '
+             f'each value is typically within ±{max(0.3 * cal.degrees_per_px, 0.05):.1f} {unit} of the drawn line.')
 m = st.columns(4)
-m[0].metric('Time per pixel column', f'{cal.seconds_per_px:.0f} s')
-m[1].metric('Temperature per pixel', f'{cal.degrees_per_px:.2f} {unit}')
+m[0].metric('Time per pixel column', f'{cal.seconds_per_px:.0f} s', border=True,
+            help='How much time one pixel column of the screenshot covers. ' + precision)
+m[1].metric('Temperature per pixel', f'{cal.degrees_per_px:.2f} {unit}', border=True,
+            help='How much temperature one pixel row of the screenshot covers. ' + precision)
 for i, label in enumerate(SERIES):
     tr = traces[label]
     m[2 + i].metric(label.replace(' temperature', ' line found'),
-                    '—' if tr is None else f'{100 * tr.columns_found:.0f} % of columns',
+                    '—' if tr is None else f'{100 * tr.columns_found:.0f} %', border=True,
                     help='Share of pixel columns, between the first and last point of the line, where the line '
-                         'colour was found. The rest is bridged or left empty.')
-st.caption(f'Lines are read to a fraction of a pixel from the anti-aliased edges, so on a clean screenshot each '
-           f'value is typically within ±{max(0.3 * cal.degrees_per_px, 0.05):.1f} {unit} of the drawn line.')
+                         'colour was found. The rest is bridged across short gaps or left empty.')
 
-o1, o2 = st.columns([2, 3])
-interval_name = o1.selectbox('Rows', list(INTERVALS), index=0, key='interval',
-                             help='Values are interpolated between pixel columns onto a regular clock that '
-                                  'starts at the start time.')
+o1, o2 = st.columns([2, 3], vertical_alignment='bottom')
+interval_name = o1.selectbox('Time step between rows', list(INTERVALS), index=0, key='interval',
+                             help='How often the table has a row. Values are interpolated between pixel columns '
+                                  'onto a regular clock that starts at the start time.')
 interval = INTERVALS[interval_name]
 if interval and cal.seconds_per_px > 3 * interval:
     o2.caption(f'The screenshot has one column every {cal.seconds_per_px:.0f} s, so rows this close together '
@@ -572,9 +595,19 @@ chart.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10), hovermode='
                     yaxis_title=f'Temperature ({unit})', xaxis=dict(tickformat='%H:%M\n%d/%m'))
 st.plotly_chart(chart, width='stretch', config={'displaylogo': False})
 
-st.dataframe(table, width='stretch', hide_index=True, height=320)
+centred = {c: (st.column_config.TextColumn(c, alignment='center') if c == 'Timestamp' else
+                st.column_config.NumberColumn(c, alignment='center', format='%.1f' if interval else '%.2f'))
+           for c in table.columns}
+st.dataframe(table, width='stretch', hide_index=True, height=320, column_config=centred)
 first = times[0]
-st.download_button('Download CSV', dg.to_csv_bytes(table), file_name=f'chart_data_{first:%Y-%m-%d_%H%M}.csv',
-                   mime='text/csv', type='primary', icon=':material/download:')
+default_name = f'chart_data_{first:%Y-%m-%d_%H%M}'
+d1, d2 = st.columns([3, 1], vertical_alignment='bottom')
+name = d1.text_input('File name', value=default_name, key=f'file_name_{digest[:8]}',
+                     help='Name of the CSV file to save. ".csv" is added if you leave it out.')
+name = ''.join(ch for ch in name.strip() if ch not in '\\/:*?"<>|') or default_name
+if not name.lower().endswith('.csv'):
+    name += '.csv'
+d2.download_button('Download CSV', dg.to_csv_bytes(table), file_name=name,
+                   mime='text/csv', type='primary', icon=':material/download:', width='stretch')
 st.caption(f'{len(table)} rows from {table["Timestamp"].iloc[0]} to {table["Timestamp"].iloc[-1]}. '
            'Timestamps are day/month/year. Empty cells are gaps where the line was not visible.')
