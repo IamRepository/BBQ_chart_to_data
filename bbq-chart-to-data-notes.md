@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 8 October 2026 for v1.3.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 8 October 2026 for v1.4.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -14,6 +14,13 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
+
+## v1.4.0 (8 Oct 2026)
+- Title "BBQ Chart to :material/dashboard: Data"; page icon :material/dashboard:.
+- time_picker(): times are no longer st.time_input; a popover button showing HH:MM opens hour pills (00-23), minute pills (every 5) and an exact-minute box. Time kept in session_state (start_time, x1_time, x2_time), not as a widget key.
+- Table drawn as HTML (html_table) because st.dataframe cannot centre headings: sticky header, centred headings and values, colours from st.context.theme.type.
+- Download: save_button() in st.html(unsafe_allow_javascript=True); uses the browser Save dialog (window.showSaveFilePicker, Chrome/Edge) with the suggested name, otherwise a normal download. Suggested file name = uploaded screenshot name without extension (examples: probe_app_example / clock_times_example).
+- Tested in Chromium (light and dark): picker sets the start, headings centred, Save dialog called with the name (stubbed in the test), fallback download name correct.
 
 ## v1.3.0 (gaps, 8 Oct 2026)
 - Data gaps: the user's second chart has no data from ~10 h to ~22.5 h (the app joins it with grey dotted lines), then a short stretch at the end. trace_line now looks for further pieces of the line in the columns the main path does not use (_best_path run again, up to 4 pieces, each ≥ max(3, 0.4 % of width) columns), so the end stretch is traced.

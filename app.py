@@ -8,6 +8,7 @@ overridden by hand.
 from __future__ import annotations
 
 import base64
+import html
 import colorsys
 import hashlib
 import io
@@ -47,7 +48,7 @@ IMAGE_KEYS = ('y_mode', 'y1_sel', 'y1_px', 'y1_val', 'y2_sel', 'y2_px', 'y2_val'
 EXAMPLES = {'probe': ('Probe app', 'A phone probe app chart with elapsed hours (4h, 8h, …) and a legend'),
             'clock': ('Clock times', 'A chart with clock times on the time axis (18:00, 20:00, …)')}
 
-st.set_page_config(page_title=APP_NAME, page_icon='📈', layout='wide')
+st.set_page_config(page_title=APP_NAME, page_icon=':material/dashboard:', layout='wide')
 st.markdown("""<style>
 .bcd-chip{display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;font-size:.9rem}
 .bcd-chip span.sw{width:16px;height:16px;border-radius:3px;border:1px solid rgba(128,128,128,.5);display:inline-block}
@@ -170,6 +171,104 @@ def reset_for_new_image(digest: str, layout: dg.Layout, example: str | None, sha
     st.session_state.x2_date, st.session_state.x2_time = end.date(), end.time()
 
 
+def time_picker(label: str, key: str, flag: str, where=None):
+    """A time field that opens a picker (hour grid and minute buttons), like the date picker.
+
+    The chosen time is kept in st.session_state[key] (a datetime.time).
+    """
+    where = where or st
+    t = st.session_state[key]
+
+    def mark(part):
+        cur = st.session_state[key]
+        h, minute = cur.hour, cur.minute
+        value = st.session_state.get(key + part)
+        if part == '_h' and value is not None:
+            h = int(value)
+        elif part == '_m' and value is not None:
+            minute = int(value)
+        elif part == '_mm' and value is not None:
+            minute = int(value)
+        st.session_state[key] = time(h, minute)
+        st.session_state[flag] = True
+
+    # keep the picker's buttons in step with the stored time
+    st.session_state[key + '_h'] = f'{t.hour:02d}'
+    st.session_state[key + '_m'] = f'{t.minute:02d}' if t.minute % 5 == 0 else None
+    st.session_state[key + '_mm'] = t.minute
+    with where.container():
+        st.markdown(f'<p class="bcd-label">{label}</p>', unsafe_allow_html=True)
+        with st.popover(f'{t:%H:%M}', icon=':material/schedule:', width='stretch'):
+            st.pills('Hour', [f'{h:02d}' for h in range(24)], key=key + '_h',
+                     on_change=mark, args=('_h',))
+            st.pills('Minute', [f'{m:02d}' for m in range(0, 60, 5)], key=key + '_m',
+                     on_change=mark, args=('_m',))
+            st.number_input('Exact minute', 0, 59, step=1, key=key + '_mm',
+                            on_change=mark, args=('_mm',))
+    return st.session_state[key]
+
+
+def html_table(df, decimals: int = 1, height: int = 330) -> str:
+    """The table as HTML: headings and values centred, header fixed while scrolling."""
+    dark = getattr(getattr(st.context, 'theme', None), 'type', 'light') == 'dark'
+    head_bg = '#262730' if dark else '#f6f7f9'
+    line = 'rgba(250,250,250,.12)' if dark else 'rgba(49,51,63,.12)'
+    muted = 'rgba(250,250,250,.65)' if dark else 'rgba(49,51,63,.7)'
+    cells = []
+    for row in df.itertuples(index=False):
+        tds = ''.join('<td>' + ('' if isinstance(v, float) and np.isnan(v) else
+                                f'{v:.{decimals}f}' if isinstance(v, float) else html.escape(str(v))) + '</td>'
+                      for v in row)
+        cells.append(f'<tr>{tds}</tr>')
+    head = ''.join(f'<th>{html.escape(str(c))}</th>' for c in df.columns)
+    return (f'<div class="bcd-table" style="max-height:{height}px;overflow:auto;border:1px solid {line};'
+            f'border-radius:.5rem"><table style="width:100%;border-collapse:collapse;font-size:.875rem">'
+            f'<thead><tr>{head}</tr></thead><tbody>{"".join(cells)}</tbody></table></div>'
+            f'<style>.bcd-table th{{position:sticky;top:0;background:{head_bg};color:{muted};font-weight:400;'
+            f'text-align:center;padding:.55rem .75rem;border-bottom:1px solid {line}}}'
+            f'.bcd-table td{{text-align:center;padding:.45rem .75rem;border-bottom:1px solid {line}}}'
+            f'.bcd-table tr:last-child td{{border-bottom:none}}</style>')
+
+
+def save_button(data: bytes, file_name: str) -> str:
+    """'Download CSV' that asks where to save (browser Save dialog) where the browser allows it."""
+    b64 = base64.b64encode(data).decode()
+    uid = hashlib.sha1(data + file_name.encode()).hexdigest()[:10]
+    name_js = file_name.replace('\\', '').replace("'", "\\'")
+    return f"""
+<button id="bcd-save-{uid}" class="bcd-save" type="button">
+  <svg width="18" height="18" viewBox="0 0 24 24" style="vertical-align:-4px;margin-right:.45rem" fill="currentColor"><path d="M12 16 7 11l1.4-1.45 2.6 2.6V4h2v8.15l2.6-2.6L17 11l-5 5Zm-6 4q-.825 0-1.412-.587Q4 18.825 4 18v-3h2v3h12v-3h2v3q0 .825-.587 1.413Q18.825 20 18 20H6Z"/></svg>Download CSV
+</button>
+<style>
+.bcd-save{{width:100%;height:2.5rem;border:none;border-radius:.5rem;background:#ff4b4b;color:#fff;
+  font:inherit;font-size:1rem;cursor:pointer}}
+.bcd-save:hover{{background:#ff3333}}
+</style>
+<script>
+(function() {{
+  const btn = document.getElementById('bcd-save-{uid}');
+  if (!btn || btn.dataset.ready) return;
+  btn.dataset.ready = '1';
+  btn.addEventListener('click', async () => {{
+    const bytes = Uint8Array.from(atob('{b64}'), c => c.charCodeAt(0));
+    const blob = new Blob([bytes], {{type: 'text/csv'}});
+    if (window.showSaveFilePicker) {{
+      try {{
+        const handle = await window.showSaveFilePicker({{suggestedName: '{name_js}',
+          types: [{{description: 'CSV file', accept: {{'text/csv': ['.csv']}}}}]}});
+        const w = await handle.createWritable(); await w.write(blob); await w.close();
+        return;
+      }} catch (e) {{ if (e.name === 'AbortError') return; }}
+    }}
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = '{name_js}';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }});
+}})();
+</script>"""
+
+
 def fmt_list(values: list, limit: int = 8) -> str:
     if len(values) <= limit:
         return ', '.join(values)
@@ -206,7 +305,7 @@ def overlay_figure(data: bytes, img, area, y_refs, x_refs, traces, colours) -> g
 
 # --------------------------------------------------------------------------- page
 
-st.title(APP_NAME)
+st.title('BBQ Chart to :material/dashboard: Data')
 st.markdown(f'<p class="bcd-byline">Created by {AUTHOR}</p>', unsafe_allow_html=True)
 st.caption(f'Version {VERSION} · Screenshot of a temperature chart → table of ambient and meat temperatures → CSV')
 
@@ -343,8 +442,7 @@ with right:
         c1, c2 = st.columns(2)
         c1.date_input('Start date', key='start_date', format='DD/MM/YYYY',
                       on_change=touched, args=('start_touched',))
-        c2.time_input('Start time (at 0 h)', key='start_time', step=60,
-                      on_change=touched, args=('start_touched',))
+        time_picker('Start time (at 0 h)', 'start_time', 'start_touched', c2)
         if cook_date:
             st.caption(f'Start date read from the screenshot: {cook_date:%d/%m/%Y}. Set the start time.')
         t0 = datetime.combine(st.session_state.start_date, st.session_state.start_time)
@@ -373,12 +471,12 @@ with right:
         with c1:
             x1 = ref_choice('Start reference', 'x1', x_opts, 0, 'Custom column', W * 0.1, W - 1)
         c2.date_input('Start date', key='x1_date', format='DD/MM/YYYY', on_change=touched, args=('manual_touched',))
-        c3.time_input('Start time', key='x1_time', step=60, on_change=touched, args=('manual_touched',))
+        time_picker('Start time', 'x1_time', 'manual_touched', c3)
         c1, c2, c3 = st.columns([3, 2, 2])
         with c1:
             x2 = ref_choice('End reference', 'x2', x_opts, len(x_opts) - 1, 'Custom column', W * 0.9, W - 1)
         c2.date_input('End date', key='x2_date', format='DD/MM/YYYY', on_change=touched, args=('manual_touched',))
-        c3.time_input('End time', key='x2_time', step=60, on_change=touched, args=('manual_touched',))
+        time_picker('End time', 'x2_time', 'manual_touched', c3)
         t1 = datetime.combine(st.session_state.x1_date, st.session_state.x1_time)
         t2 = datetime.combine(st.session_state.x2_date, st.session_state.x2_time)
         rolled = False
@@ -622,10 +720,7 @@ chart.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10), hovermode='
                     yaxis_title=f'Temperature ({unit})', xaxis=dict(tickformat='%H:%M\n%d/%m'))
 st.plotly_chart(chart, width='stretch', config={'displaylogo': False})
 
-centred = {c: (st.column_config.TextColumn(c, alignment='center') if c == 'Timestamp' else
-                st.column_config.NumberColumn(c, alignment='center', format='%.1f' if interval else '%.2f'))
-           for c in table.columns}
-st.dataframe(table, width='stretch', hide_index=True, height=320, column_config=centred)
+st.html(html_table(table, 1 if interval else 2))
 if n_filled:
     st.caption(f'{n_filled} rows have values filled across gaps (dotted in the chart).')
 
@@ -640,10 +735,13 @@ if filled is not None and n_filled:
         export = table.copy()
         export['Filled'] = [' + '.join(names[c] for c in filled.columns[1:] if row[c])
                             for _, row in filled.iterrows()]
-first = times[0]
-default_name = f'chart_data_{first:%Y-%m-%d_%H%M}'
+# suggested name: the screenshot's file name without its extension
+if uploaded is not None:
+    default_name = uploaded.name.rsplit('.', 1)[0] if '.' in uploaded.name else uploaded.name
+else:
+    default_name = f'{EXAMPLES[example][0].lower().replace(" ", "_")}_example'
 d1, d2 = st.columns([3, 1], vertical_alignment='bottom')
-# the suggested name follows the start time until the user types a name of their own
+# the suggested name follows the screenshot until the user types a name of their own
 if st.session_state.get('file_name_auto') != default_name and not st.session_state.get('file_name_edited'):
     st.session_state.file_name = default_name
     st.session_state.file_name_auto = default_name
@@ -652,8 +750,10 @@ name = d1.text_input('File name', key='file_name', on_change=touched, args=('fil
 name = ''.join(ch for ch in name.strip() if ch not in '\\/:*?"<>|') or default_name
 if not name.lower().endswith('.csv'):
     name += '.csv'
-d2.download_button('Download CSV', dg.to_csv_bytes(export), file_name=name,
-                   mime='text/csv', type='primary', icon=':material/download:', width='stretch')
+with d2:
+    st.html(save_button(dg.to_csv_bytes(export), name), unsafe_allow_javascript=True)
 st.caption(f'{len(export)} rows from {export["Timestamp"].iloc[0]} to {export["Timestamp"].iloc[-1]}. '
            'Timestamps are day/month/year.'
-           + (' Empty cells are gaps where the line was not visible.' if export.iloc[:, 1:3].isna().any().any() else ''))
+           + (' Empty cells are gaps where the line was not visible.' if export.iloc[:, 1:3].isna().any().any() else '')
+           + ' The browser asks where to save the file (Chrome and Edge); other browsers save to the Downloads '
+             'folder unless "Ask where to save each file" is turned on in their settings.')

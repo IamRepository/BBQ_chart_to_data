@@ -18,7 +18,7 @@ Timestamps are day/month/year. The CSV imports straight into the Cook Profile Da
    - Or switch to *Two reference points* and give the date and time at two places on the axis.
 4. **Lines**: the legend words decide which colour is which (Internal/Meat/Probe → meat, Ambient/Pit/Grill/Smoker → ambient). A flat line, such as a target or setpoint, is never used. Without a legend, ambient is the line that is hotter at the start of the cook. You can change either line, or pick *Custom colour*.
 5. **Data**: check that the thin traced lines sit on the curves in the screenshot and choose the time step between rows (every minute by default). Where the app recorded nothing (a gap, often drawn dotted), *Join gaps with straight lines* fills the values on a straight line across the gap; filled stretches are dotted in the chart.
-6. **Export**: name the file and download the CSV. Optionally add a column marking the filled values.
+6. **Export**: the file name starts as the screenshot's name; change it if you like and press *Download CSV*. In Chrome and Edge the browser asks where to save the file; other browsers save to the Downloads folder unless "Ask where to save each file" is on in their settings. Optionally add a column marking the filled values.
 
 Hover over the screenshot to read pixel positions; drag to zoom in. *Search area and tracing settings* has the box the lines are searched in, the colour tolerance, gap bridging, a top-edge option for charts with a filled area under the line, and optional smoothing.
 
