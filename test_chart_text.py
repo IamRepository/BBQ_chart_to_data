@@ -10,7 +10,7 @@ import numpy as np
 
 import chart_text as ct
 import digitizer as dg
-from example_chart import (AMBIENT_RGB, INTERNAL_RGB, PROBE_END, PROBE_HOURS, PROBE_TARGET, PROBE_YMAX,
+from example_chart import (WEBER_END, WEBER_RGB, WEBER_START, make_weber_example, weber_temp, AMBIENT_RGB, INTERNAL_RGB, PROBE_END, PROBE_HOURS, PROBE_TARGET, PROBE_YMAX,
                            TARGET_RGB, make_example, make_probe_example, probe_ambient, probe_internal)
 
 T0 = datetime(2026, 6, 1, 18, 0)
@@ -183,6 +183,61 @@ class ChartWithDataGap(unittest.TestCase):
 
 
 @unittest.skipUnless(ct.available(), 'Tesseract is not installed')
+class WeberStyleChart(unittest.TestCase):
+    """Gridlines run under the temperature labels, labels sit below their gridline
+    (temperature) or right of it (time), header '20 Jun 2026 - 17:40 to 03:52',
+    one stepped line and a value bubble over the end of the 150° gridline."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ex = make_weber_example()
+        cls.img = np.asarray(cls.ex.image)
+        cls.lay = dg.detect_layout(cls.img)
+
+    def test_plot_starts_at_the_axis_not_under_the_labels(self):
+        self.assertAlmostEqual(self.lay.plot.left, 186, delta=2)
+        self.assertTrue(any(abs(r - self.ex.y_of_temp(150)) < 1.5 for r in self.lay.h_lines),
+                        'the 150° gridline under the line and the bubble is found')
+
+    def test_temperature_scale(self):
+        y = ct.read_temperature_axis(self.img, self.lay)
+        self.assertGreaterEqual(len(y.used), 5)
+        self.assertAlmostEqual(float(y.value(self.ex.y_of_temp(250))), 250, delta=0.6)
+        self.assertAlmostEqual(float(y.value(self.ex.y_of_temp(0))), 0, delta=0.6)
+
+    def test_time_labels_right_of_their_gridline(self):
+        x = ct.read_time_axis(self.img, self.lay)
+        self.assertEqual(x.kind, 'clock')
+        self.assertEqual([l.text for l in x.used], ['20:00', '23:00', '02:00'])
+        self.assertAlmostEqual(float(x.value(self.ex.x_of_hour(0))), 17 + 40 / 60, delta=2 / 60)
+
+    def test_header_date_and_times(self):
+        from datetime import date, time
+        self.assertEqual(ct.read_header(self.img, self.lay), (date(2026, 6, 20), time(17, 40), time(3, 52)))
+
+    def test_table(self):
+        lay, img = self.lay, self.img
+        y, x = ct.read_temperature_axis(img, lay), ct.read_time_axis(img, lay)
+        area = dg.default_search_area(lay, img.shape[1], img.shape[0])
+        cands = dg.colour_candidates(img, area)
+        c = min(cands, key=lambda c: dist(c.rgb, WEBER_RGB))
+        tr = dg.trace_line(img, area, c.rgb, lay.background, others=[k.rgb for k in cands])
+        midnight = datetime(2026, 6, 20)
+        u = x.used
+        cal = dg.Calibration(y.used[0].pos, float(y.value(y.used[0].pos)), y.used[-1].pos, float(y.value(y.used[-1].pos)),
+                             u[0].pos, midnight + timedelta(hours=u[0].value), u[-1].pos, midnight + timedelta(hours=u[-1].value))
+        df = dg.build_table({'Ambient temperature': dg.series_in_units(tr, cal)}, cal, 60, anchor=midnight)
+        first = datetime.strptime(df['Timestamp'].iloc[0], dg.TIME_FORMAT)
+        last = datetime.strptime(df['Timestamp'].iloc[-1], dg.TIME_FORMAT)
+        self.assertLess(abs((first - WEBER_START).total_seconds()), 300)
+        self.assertLess(abs((last - WEBER_END).total_seconds()), 300)
+        rows = dict(zip(df['Timestamp'], df['Ambient temperature (°C)']))
+        for stamp, value in (('20/06/2026 19:00', 80), ('20/06/2026 22:00', 110), ('21/06/2026 01:00', 150),
+                             ('21/06/2026 03:00', 150)):
+            self.assertAlmostEqual(rows[stamp], value, delta=0.6, msg=stamp)
+
+
+@unittest.skipUnless(ct.available(), 'Tesseract is not installed')
 class ClockChart(unittest.TestCase):
     def test_clock_labels_past_midnight(self):
         for dark in (False, True):
@@ -231,6 +286,20 @@ class Parsing(unittest.TestCase):
         self.assertEqual(ct._role('Pit'), 'ambient')
         self.assertIsNone(ct._role('Elapsed'))
         self.assertIsNone(ct._role('Chart'))
+
+    def test_align_labels_offset_from_gridlines(self):
+        lines = [100.0, 200.0, 300.0, 400.0]
+        # labels drawn 35 px below their gridline, one gridline missing (300)
+        out = ct._align([135.0, 235.0, 335.0, 435.0], [30] * 4, [100.0, 200.0, 400.0])
+        self.assertEqual(out, [100.0, 200.0, 300.0, 400.0])
+        # labels centred on their gridlines stay where they are
+        self.assertEqual(ct._align([100.5, 199.6, 300.2], [20] * 3, lines), [100.0, 200.0, 300.0])
+
+    def test_time_range(self):
+        from datetime import time
+        self.assertEqual(ct.parse_start_time('20 Jun 2026 - 17:40 to 03:52'), time(17, 40))
+        self.assertEqual(ct.parse_end_time('20 Jun 2026 - 17:40 to 03:52'), time(3, 52))
+        self.assertIsNone(ct.parse_end_time('Jun 21, 2026 18:05'))
 
     def test_fit_drops_misread_label(self):
         # rows 0..300, labels 150..0; the 100 is misread as 6

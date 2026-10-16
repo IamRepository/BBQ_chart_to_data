@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 16 October 2026 for v1.5.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
+Last updated 16 October 2026 for v1.6.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -15,12 +15,20 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
 
-## Audit 16 Oct 2026: Weber Smoque XL screenshot (open, not fixed yet)
+## Audit 16 Oct 2026: Weber Smoque XL screenshot (fixed in v1.6.0, see below)
 1920x1080 landscape chart, one red line (cavity), labels 0-250° every 50 drawn just BELOW their gridline, clock labels 20:00/23:00/02:00/"Now" drawn just RIGHT of their gridline, header "20 Jun 2026 - 17:40 to 03:52". The trace itself is right (plateaus at rows 735.6/638.7/510.7 = 79.8/110.0/149.9 °C). Findings:
 1. Horizontal gridlines run under the y labels to x=30, so plot.left=30 (the axis line at 186.5 is ignored, rule only accepts end gridlines within 4 % of the width). y_label_boxes looks left of x=30, finds nothing -> no temperature labels -> manual mode with placeholders 100 (top gridline) / 0 -> every value x0.4 (80->32, 110->44, 150->60). Main cause of the wrong numbers.
 2. Labels are offset from their gridlines (y: ~35 px below; x: text starts ~15 px right of the gridline). The app uses the text centre, so even with labels read: top 261 / bottom 11 instead of 250 / 0, and times 21-26 min early (17:19-03:26 instead of 17:40-03:52).
 3. The 150° gridline is missing from h_lines: the line lies on it for 3.5 h and the row is rejected as a coloured flat line.
 4. Header date read; start time not (the ' - ' between date and time is not accepted); end time 03:52 and 'Now' could also anchor the time axis.
+
+## v1.6.0 (16 Oct 2026): fixes from the Weber audit
+- detect_layout: if a column of labels (_label_column: dark uncoloured text beside ≥3 gridlines) sits between where the gridlines start and the first vertical line, that line (the axis) is the plot's left edge (same on the right). Rows partly hidden at one end (value bubble) join the grid if one end matches and they span ≥ 50 % (this also brings in lighter minor gridlines).
+- y_label_boxes: rows ≥ 60 % ink are gridlines, not text (they now run through the label strip).
+- chart_text._align: label positions from their gridlines using the offset most labels share (centred, below/above, right of the line); a missing gridline uses label position minus the offset. Replaces per-label snapping for both axes.
+- parse_start_time accepts '20 Jun 2026 - 17:40'; parse_end_time reads '17:40 to 03:52'; read_header -> (date, start, end). The app compares the screenshot's start/end with the table and shows a green check or a warning in Step 5.
+- End markers: marker_centres(); a round marker just past either end of the traced line becomes its first/last point (the dot under a value bubble = latest reading; Weber: 145.4 °C, bubble says 145°).
+- example_chart.make_weber_example + WeberStyleChart tests. Weber screenshot now: 250/0 °C, 17:44-03:53 (header 17:40-03:52), plateaus 79.7/110.0/149.9.
 
 ## v1.5.0 (16 Oct 2026)
 - Title ":material/dashboard: BBQ Chart to Data" (logo first).
@@ -75,7 +83,7 @@ Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180�
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (20 tests) and test_chart_text.py (19 tests; skipped without Tesseract).
+- test_digitizer.py (20 tests) and test_chart_text.py (26 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.

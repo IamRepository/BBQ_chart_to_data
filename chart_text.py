@@ -153,7 +153,7 @@ def y_label_boxes(img: np.ndarray, layout: Layout, side: str = 'left') -> list:
         return []
     ink = _ink(img[r0:r1, c0:c1])
     ink = _remove_long_lines(ink, axis=0)
-    ink = _remove_long_lines(ink, axis=1, share=0.85)
+    ink = _remove_long_lines(ink, axis=1, share=0.6)      # gridlines running under the labels
     lines = [(a, b) for a, b in _runs(ink.any(axis=1)) if 3 <= b - a + 1 <= 0.2 * ph]
     if not lines:
         return []
@@ -310,6 +310,42 @@ def _fit(candidates: list, n_labels: int, min_tol: float):
     return slope, intercept, chosen, float(np.abs(V - (intercept + slope * P)).max())
 
 
+def _align(centres: list, sizes: list, lines: list) -> list:
+    """Label positions on the axis, taken from the gridlines they belong to.
+
+    Charts place labels centred on their gridline, just below or above it
+    (temperature), or just right of it (time). Every label is offset from
+    its gridline by the same amount, so the offset most labels share is the
+    chart's style; each label then takes its gridline's position (or, where a
+    gridline is missing, its own position minus that offset). Without a
+    shared offset the text positions are used as they are.
+    """
+    if len(lines) < 2 or len(centres) < 2:
+        return list(centres)
+    lines = sorted(lines)
+    spacing = float(np.median(np.diff(lines)))
+    tol = [max(2.0, 0.15 * s) for s in sizes]
+    options = set()
+    for c in centres:
+        near = sorted(lines, key=lambda g: abs(g - c))[:3]
+        options.update(round(c - g, 1) for g in near if abs(c - g) < 0.6 * spacing)
+    best = None
+    for off in options:
+        support = sum(any(abs((c - g) - off) <= t for g in lines) for c, t in zip(centres, tol))
+        key = (support, -abs(off))
+        if best is None or key > best[0]:
+            best = (key, off)
+    if best is None or best[0][0] < max(2, 0.6 * len(centres)):
+        return list(centres)
+    off = best[1]
+    out = []
+    for c, t in zip(centres, tol):
+        target = c - off
+        g = min(lines, key=lambda g: abs(g - target))
+        out.append(float(g) if abs(g - target) <= t else float(target))
+    return out
+
+
 def _snap(pos: float, lines: list, tolerance: float) -> float:
     """Use a gridline position when a label is centred on it (more exact than the text)."""
     if not lines:
@@ -324,8 +360,9 @@ def read_temperature_axis(img: np.ndarray, layout: Layout) -> AxisFit:
     for side in ('left', 'right'):
         boxes = y_label_boxes(img, layout, side)
         cands, texts = [], {}
+        rows = _align([b.centre_row for b in boxes], [b.bottom - b.top + 1 for b in boxes], layout.h_lines)
         for i, box in enumerate(boxes):
-            pos = _snap(box.centre_row, layout.h_lines, max(1.5, 0.35 * (box.bottom - box.top + 1)))
+            pos = rows[i]
             reads = _readings(img, box, '0123456789-.,')
             texts[i] = (pos, reads)
             for t in dict.fromkeys(reads):
@@ -354,8 +391,9 @@ def read_time_axis(img: np.ndarray, layout: Layout) -> AxisFit:
         return AxisFit()
     boxes = x_label_boxes(img, layout)
     per_label = []
+    cols = _align([b.centre_col for b in boxes], [b.bottom - b.top + 1 for b in boxes], layout.v_lines)
     for i, box in enumerate(boxes):
-        pos = _snap(box.centre_col, layout.v_lines, max(1.5, 0.2 * (box.right - box.left + 1)))
+        pos = cols[i]
         reads = _readings(img, box, '0123456789hm:.', strip=False)
         parsed = [r for r in (_time_value(t) for t in reads) if r]
         per_label.append((i, pos, reads, parsed))
@@ -537,7 +575,7 @@ def parse_start_time(text: str):
     for line in text.splitlines():
         if parse_date(line):
             # the time that follows the date on its line
-            m = re.search(r'\d{4}\b,?\s*(?:at\s+|um\s+|kl\.?\s+)?' + TIME_RE, line, re.I)
+            m = re.search(r'\d{4}\b,?\s*(?:[-–—|·]\s*)?(?:at\s+|um\s+|kl\.?\s+|from\s+|von\s+)?' + TIME_RE, line, re.I)
             if m:
                 t = _clock(re.match(TIME_RE, line[m.start(1):]))
                 if t:
@@ -546,6 +584,18 @@ def parse_start_time(text: str):
                       line, re.I)
         if m:
             t = _clock(re.match(TIME_RE, line[m.start(1):]))
+            if t:
+                return t
+    return None
+
+
+def parse_end_time(text: str):
+    """The end time of a 'start to end' range ('17:40 to 03:52', '17:40 - 03:52'), else None."""
+    for line in text.splitlines():
+        m = re.search(TIME_RE + r'\s*(?:to|until|till|bis|[-–—])\s*' + TIME_RE.replace('(?![\\d%])', ''), line, re.I)
+        if m:
+            tail = line[m.start(4):]
+            t = _clock(re.match(TIME_RE, tail))
             if t:
                 return t
     return None
@@ -583,7 +633,12 @@ def read_date(img: np.ndarray, layout: Layout):
 
 def read_start(img: np.ndarray, layout: Layout):
     """(date, start time) shown above the chart; either can be None."""
+    return read_header(img, layout)[:2]
+
+
+def read_header(img: np.ndarray, layout: Layout):
+    """(date, start time, end time) shown above the chart; any can be None."""
     if layout.plot is None or not available():
-        return None, None
+        return None, None, None
     text = _text_above_chart(img, layout)
-    return parse_date(text), parse_start_time(text)
+    return parse_date(text), parse_start_time(text), parse_end_time(text)

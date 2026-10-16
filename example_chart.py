@@ -255,3 +255,80 @@ def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3, ga
     small = im.resize((width, height), Image.LANCZOS)
     s = lambda v: (v + 0.5) / scale - 0.5
     return ProbeChart(small, s(pl), s(pr), s(pt), s(pb))
+
+
+# --------------------------------------------------------------------------- Weber-style replica
+# Landscape app chart: gridlines run under the temperature labels, labels sit
+# just below their gridline (temperature) or just right of it (time), a header
+# with the date and the cook's time range, one stepped line (the cooker's
+# setpoint) and a value bubble at the end.
+
+WEBER_START = datetime(2026, 6, 20, 17, 40)
+WEBER_END = datetime(2026, 6, 21, 3, 52)
+WEBER_RGB = (234, 54, 14)
+
+
+def weber_temp(h):
+    """Temperature h hours after 17:40."""
+    h = np.asarray(h, float)
+    v = np.where(h < 0.03, 22.0, 45.0)
+    v = np.where(h >= 0.25, 80.0, v)
+    v = np.where(h >= 3.42, 110.0, v)          # 21:05
+    v = np.where(h >= 6.75, 150.0, v)          # 00:25
+    for c, depth in ((8.25, 50), (8.98, 30)):  # lid openings at 01:55 and 02:39
+        v = np.where(np.abs(h - c) < 0.012, 150.0 - depth, v)
+    return v
+
+
+@dataclass
+class WeberChart:
+    image: Image.Image
+    x_of_hour: object       # hours after 17:40 -> pixel column
+    y_of_temp: object       # temperature -> pixel row
+
+
+def make_weber_example(width: int = 1920, height: int = 1080, scale: int = 2) -> WeberChart:
+    W, H = width * scale, height * scale
+    k = width / 1920 * scale
+    im = Image.new('RGB', (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(im)
+    d.text((55 * k, 95 * k), 'Weber Smoque XL', fill=(0, 0, 0), font=_font(int(80 * k)), anchor='lm')
+    d.text((955 * k, 95 * k), '20 Jun 2026 - 17:40 to 03:52', fill=(20, 20, 20), font=_font(int(40 * k)), anchor='lm')
+    d.rounded_rectangle([1570 * k, 35 * k, 1865 * k, 155 * k], radius=14 * k, outline=(0, 0, 0), width=int(6 * k))
+    d.text((1700 * k, 95 * k), 'grill', fill=(0, 0, 0), font=_font(int(60 * k)), anchor='mm')
+    left, right, top, bottom = 186.5, 1888, 189.5, 991.5
+    yv = lambda v: (bottom - (bottom - top) * np.asarray(v, float) / 250) * k
+    xh = lambda h: (527.5 + (np.asarray(h, float) - 7 / 3) * 147) * k     # 20:00 = 2 h 20 min after 17:40
+    lab = _font(int(48 * k))
+    for v in range(0, 251, 25):
+        major = v % 50 == 0
+        x0 = 30 * k if major else 157 * k
+        d.line([(x0, yv(v)), (right * k, yv(v))], fill=(222, 222, 222) if major else (238, 238, 238), width=int(3 * k))
+        if major:
+            d.text((160 * k, yv(v) + 6 * k), f'{v}°', fill=(10, 10, 10), font=lab, anchor='rt')
+    d.line([(left * k, top * k), (left * k, (bottom + 85) * k)], fill=(205, 205, 205), width=int(3 * k))
+    for clock in range(18, 28):                                  # a gridline every hour, darker every 3 h
+        x = xh(clock - (17 + 40 / 60))
+        if x / k > 1680:
+            continue
+        major = clock % 3 == 2                                   # 20:00, 23:00, 02:00
+        d.line([(x, top * k), (x, (bottom + 85) * k)], fill=(215, 215, 215) if major else (236, 236, 236), width=int(3 * k))
+    for i, label in enumerate(('20:00', '23:00', '02:00')):
+        x = xh(7 / 3 + 3 * i)
+        d.text((x + 14 * k, 1032 * k), label, fill=(20, 20, 20), font=_font(int(34 * k)), anchor='lm')
+    end_h = (WEBER_END - WEBER_START).total_seconds() / 3600
+    xn = xh(end_h) + 4 * k
+    d.line([(xn, top * k), (xn, (bottom + 85) * k)], fill=(215, 215, 215), width=int(3 * k))
+    d.text((xn + 14 * k, 1032 * k), 'Now', fill=(20, 20, 20), font=_font(int(34 * k)), anchor='lm')
+
+    hrs = np.linspace(0, end_h, 6000)
+    pts = list(zip(xh(hrs), yv(weber_temp(hrs))))
+    d.line(pts, fill=WEBER_RGB, width=int(6 * k), joint='curve')
+    ex, ey = pts[-1]
+    d.rounded_rectangle([ex - 30 * k, ey - 42 * k, ex + 145 * k, ey + 42 * k], radius=36 * k, fill=(255, 255, 255),
+                        outline=(225, 225, 225), width=int(3 * k))
+    d.ellipse([ex - 10 * k, ey - 10 * k, ex + 10 * k, ey + 10 * k], fill=WEBER_RGB)
+    d.text((ex + 25 * k, ey), '150°', fill=(10, 10, 10), font=_font(int(48 * k)), anchor='lm')
+
+    small = im.resize((width, height), Image.LANCZOS)
+    return WeberChart(small, lambda h: (xh(h) / k), lambda v: yv(v) / k)

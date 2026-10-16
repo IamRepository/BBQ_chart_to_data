@@ -78,7 +78,7 @@ def analyse_image(data: bytes):
 def read_text(digest: str, _img, _layout):
     """Axis labels, legend, cook date and start time (slowest step: a few seconds)."""
     return (ct.read_temperature_axis(_img, _layout), ct.read_time_axis(_img, _layout),
-            ct.read_legend(_img, _layout), ct.read_start(_img, _layout))
+            ct.read_legend(_img, _layout), ct.read_header(_img, _layout))
 
 
 @st.cache_data(show_spinner=False, max_entries=4)
@@ -396,9 +396,9 @@ if st.session_state.get('image_digest') != digest:
 text_ok = ct.available()
 if text_ok:
     with st.spinner('Reading the axis labels and the legend…'):
-        yfit, xfit, legend, (cook_date, cook_time) = read_text(digest, img, layout)
+        yfit, xfit, legend, (cook_date, cook_time, cook_end) = read_text(digest, img, layout)
 else:
-    yfit, xfit, legend, cook_date, cook_time = ct.AxisFit(), ct.AxisFit(), [], None, None
+    yfit, xfit, legend, cook_date, cook_time, cook_end = ct.AxisFit(), ct.AxisFit(), [], None, None, None
 if (cook_date or cook_time) and not st.session_state.get('date_applied'):
     # the screenshot shows the date (e.g. 'Jun 21, 2026') and maybe the start time: use them
     if cook_date:
@@ -785,6 +785,26 @@ st.plotly_chart(chart, width='stretch', config={'displaylogo': False})
 st.html(html_table(table, 1 if interval else 2))
 if n_filled:
     st.caption(f'{n_filled} rows have values filled across gaps (dotted in the chart).')
+
+# cross-check: the screenshot's own start and end times against the table's
+if cook_time or cook_end:
+    def _minutes_apart(a, b):
+        d = abs((a.hour * 60 + a.minute) - (b.hour * 60 + b.minute)) % 1440
+        return min(d, 1440 - d)
+    first_t, last_t = times[0].time(), times[-1].time()
+    checks, worst = [], 0
+    if cook_time:
+        checks.append(f'start {cook_time:%H:%M} (table {first_t:%H:%M})')
+        worst = max(worst, _minutes_apart(cook_time, first_t))
+    if cook_end:
+        checks.append(f'end {cook_end:%H:%M} (table {last_t:%H:%M})')
+        worst = max(worst, _minutes_apart(cook_end, last_t))
+    step_min = max(cal.seconds_per_px / 60, (interval or 60) / 60)
+    if worst <= max(5, 3 * step_min):
+        st.success('Times match the screenshot: ' + ', '.join(checks) + '.', icon=':material/check_circle:')
+    else:
+        st.warning('The times differ from the ones printed on the screenshot: ' + ', '.join(checks)
+                   + '. Check the time axis in Step 3.', icon=':material/schedule:')
 
 st.divider()
 st.subheader('Step 6: Export')

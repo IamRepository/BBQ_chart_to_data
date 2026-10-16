@@ -160,6 +160,15 @@ def detect_layout(img: np.ndarray) -> Layout:
             groups.append([r])
     groups.sort(key=lambda g: (len(g), g[-1][0] - g[0][0]), reverse=True)
     grid = groups[0]
+    # a gridline partly hidden (a value bubble or marker over one end) still
+    # starts or ends with the others and covers most of their width
+    g_lo = np.median([r[1] for r in grid]); g_hi = np.median([r[2] for r in grid])
+    for g in groups[1:]:
+        for r in g:
+            one_end = abs(r[1] - g_lo) < 0.04 * w or abs(r[2] - g_hi) < 0.04 * w
+            if one_end and (r[2] - r[1]) >= 0.5 * (g_hi - g_lo) and g_lo - 0.04 * w <= r[1] and r[2] <= g_hi + 0.04 * w:
+                grid.append(r)
+    grid.sort(key=lambda r: r[0])
     layout.h_lines = sorted(r[0] for r in grid)
     left = int(round(np.median([r[1] for r in grid])))
     right = int(round(np.median([r[2] for r in grid])))
@@ -171,6 +180,15 @@ def detect_layout(img: np.ndarray) -> Layout:
         for centre, s, e in _line_groups(band.mean(axis=0), 0.3):
             if e - s <= 6 and left - 0.02 * w <= centre <= right + 0.02 * w:
                 layout.v_lines.append(centre)
+    # Some charts run their gridlines under the temperature labels; the plot
+    # then starts at the axis line to the right of the labels, not where the
+    # gridlines start.
+    if layout.v_lines and 0.04 * w < layout.v_lines[0] - left < 0.3 * w and \
+            _label_column(img, left, int(layout.v_lines[0]) - 2, layout.h_lines, bg):
+        left = int(np.floor(layout.v_lines[0]))
+    if layout.v_lines and 0.04 * w < right - layout.v_lines[-1] < 0.3 * w and \
+            _label_column(img, int(layout.v_lines[-1]) + 3, right, layout.h_lines, bg):
+        right = int(np.ceil(layout.v_lines[-1]))
     # vertical gridlines at the ends are the most precise plot edges
     if len(layout.v_lines) >= 2:
         if abs(layout.v_lines[0] - left) < 0.04 * w:
@@ -181,6 +199,26 @@ def detect_layout(img: np.ndarray) -> Layout:
     layout.background = background_colour(img[layout.plot.top:layout.plot.bottom + 1,
                                               layout.plot.left:layout.plot.right + 1])
     return layout
+
+
+def _label_column(img: np.ndarray, x0: int, x1: int, h_lines: list, bg) -> bool:
+    """True if the strip x0..x1 holds a column of labels next to the gridlines:
+    dark, uncoloured text beside at least three gridlines (gridline rows left out)."""
+    if x1 - x0 < 8 or len(h_lines) < 3:
+        return False
+    strip = img[:, x0:x1].astype(np.int16)
+    diff = np.abs(strip - np.asarray(bg, np.int16)).sum(axis=2)
+    chroma = strip.max(axis=2) - strip.min(axis=2)
+    ink = (diff > 150) & (chroma < 60)
+    for g in h_lines:                                   # the gridlines themselves are not text
+        ink[max(0, int(g) - 2):int(g) + 3] = False
+    spacing = float(np.median(np.diff(sorted(h_lines))))
+    near = 0
+    for g in h_lines:
+        a, b = max(0, int(g - 0.6 * spacing)), int(g + 0.6 * spacing)
+        if ink[a:b].sum() >= 6:
+            near += 1
+    return near >= max(3, 0.5 * len(h_lines))
 
 
 def _thin_strokes(img: np.ndarray, axis: int, reach: int = 4) -> np.ndarray:
@@ -523,9 +561,13 @@ def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
         # markers drawn on the line in its colour (a peak triangle, dots) are
         # far thicker than the line; remove them and bridge the line across
         cleaned = remove_markers(cov, thick)
+        markers = []
         if cleaned is not cov:
+            markers = marker_centres(cov, cleaned)
             cov = cleaned
             cands = [_column_runs(cov[:, x]) for x in range(W)]
+    else:
+        markers = []
 
     # flatten candidates (sorted by column)
     X, C, M, T, B = [], [], [], [], []
@@ -585,6 +627,18 @@ def trace_line(img: np.ndarray, area: PlotArea, rgb, bg, tolerance: float = 70,
         else:
             y[x] = C[k]
         found[x] = True
+
+    # An end marker (the dot an app draws at the latest reading) just past
+    # either end of the line is the line's first or last point; the part of
+    # the line between, often hidden under a value bubble, is a gap.
+    idx = np.flatnonzero(found)
+    if idx.size and markers:
+        reach = max(3 * max_bridge_px, 60)
+        for row, col in markers:
+            c = int(round(col))
+            if 0 <= c < W and not found[c] and (idx[-1] < c <= idx[-1] + reach or idx[0] - reach <= c < idx[0]):
+                y[c] = row
+                found[c] = True
 
     # bridge short gaps (other line drawn on top, dashed lines)
     idx = np.flatnonzero(found)
@@ -712,6 +766,35 @@ def remove_markers(cov: np.ndarray, thick: float, max_share: float = 0.01) -> np
     grown = _box_any(_box_any(blob, reach, forward=True) > 0, reach, forward=False) > 0
     out = cov.copy()
     out[grown] = 0
+    return out
+
+
+def marker_centres(before: np.ndarray, after: np.ndarray) -> list:
+    """(row, column) centres of the round markers remove_markers took out."""
+    gone = (before >= 0.5) & (after == 0)
+    cols = np.flatnonzero(gone.any(axis=0))
+    out = []
+    for a, b in _runs_1d(cols):
+        part = gone[:, a:b + 1]
+        rows = np.flatnonzero(part.any(axis=1))
+        height, width = rows[-1] - rows[0] + 1, b - a + 1
+        if 0.6 <= height / width <= 1.6:                 # round-ish: a dot, not a long smear
+            r, c = np.nonzero(part)
+            out.append((float(r.mean()), float(c.mean() + a)))
+    return out
+
+
+def _runs_1d(idx: np.ndarray):
+    if idx.size == 0:
+        return []
+    out, s_, p_ = [], idx[0], idx[0]
+    for i in list(idx[1:]) + [None]:
+        if i is not None and i <= p_ + 1:
+            p_ = i
+            continue
+        out.append((int(s_), int(p_)))
+        if i is not None:
+            s_ = p_ = i
     return out
 
 
