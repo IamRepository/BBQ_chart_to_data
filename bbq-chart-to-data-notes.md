@@ -15,6 +15,13 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
 
+## Audit 16 Oct 2026: Weber Smoque XL screenshot (open, not fixed yet)
+1920x1080 landscape chart, one red line (cavity), labels 0-250° every 50 drawn just BELOW their gridline, clock labels 20:00/23:00/02:00/"Now" drawn just RIGHT of their gridline, header "20 Jun 2026 - 17:40 to 03:52". The trace itself is right (plateaus at rows 735.6/638.7/510.7 = 79.8/110.0/149.9 °C). Findings:
+1. Horizontal gridlines run under the y labels to x=30, so plot.left=30 (the axis line at 186.5 is ignored, rule only accepts end gridlines within 4 % of the width). y_label_boxes looks left of x=30, finds nothing -> no temperature labels -> manual mode with placeholders 100 (top gridline) / 0 -> every value x0.4 (80->32, 110->44, 150->60). Main cause of the wrong numbers.
+2. Labels are offset from their gridlines (y: ~35 px below; x: text starts ~15 px right of the gridline). The app uses the text centre, so even with labels read: top 261 / bottom 11 instead of 250 / 0, and times 21-26 min early (17:19-03:26 instead of 17:40-03:52).
+3. The 150° gridline is missing from h_lines: the line lies on it for 3.5 h and the row is rejected as a coloured flat line.
+4. Header date read; start time not (the ' - ' between date and time is not accepted); end time 03:52 and 'Now' could also anchor the time axis.
+
 ## v1.5.0 (16 Oct 2026)
 - Title ":material/dashboard: BBQ Chart to Data" (logo first).
 - Dark mode switch next to the title (theme_switch). Streamlit cannot change the theme from Python; the switch clicks Streamlit's own ⋮ menu items (stMainMenuItem-theme-Dark/Light), then the menu's Rerun so the HTML table follows. No page reload, so the uploaded screenshot stays. The switch follows st.context.theme when the theme is changed in the menu.
