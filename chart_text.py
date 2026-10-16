@@ -513,22 +513,77 @@ def parse_date(text: str):
     return None
 
 
-def read_date(img: np.ndarray, layout: Layout):
-    """The cook date if the screenshot shows one above the chart (e.g. 'Jun 21, 2026')."""
-    if layout.plot is None or not available():
-        return None
+TIME_RE = r'(\d{1,2})[:.](\d{2})(?::\d{2})?\s*([AaPp])?\.?\s*[Mm]?\.?(?![\d%])'
+
+
+def _clock(m) -> 'time | None':
+    from datetime import time
+    h, mi, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or '').lower()
+    if ap == 'p' and h < 12:
+        h += 12
+    elif ap == 'a' and h == 12:
+        h = 0
+    return time(h, mi) if h < 24 and mi < 60 else None
+
+
+def parse_start_time(text: str):
+    """The cook's start time if the text gives one, else None.
+
+    Accepts a time on the same line as the date ('Jun 21, 2026 18:05',
+    '21.06.2026, 6:05 PM', 'Jun 21, 2026 at 6:05 pm') or after a start word
+    ('Start: 18:05', 'Started 6:05 PM', 'Start time 18:05'). Durations such as
+    'Cooking Time 22hr 44min' are not times of day.
+    """
+    for line in text.splitlines():
+        if parse_date(line):
+            # the time that follows the date on its line
+            m = re.search(r'\d{4}\b,?\s*(?:at\s+|um\s+|kl\.?\s+)?' + TIME_RE, line, re.I)
+            if m:
+                t = _clock(re.match(TIME_RE, line[m.start(1):]))
+                if t:
+                    return t
+        m = re.search(r'\b(?:start(?:ed|ing)?(?:\s+time)?|begin|began|startzeit|beginn)\b\s*(?:at|um|:)?\s*' + TIME_RE,
+                      line, re.I)
+        if m:
+            t = _clock(re.match(TIME_RE, line[m.start(1):]))
+            if t:
+                return t
+    return None
+
+
+def _text_above_chart(img: np.ndarray, layout: Layout) -> str:
     top = layout.plot.top
     if top < 20:
-        return None
-    region = img[:top]
+        return ''
+    # a full phone screenshot starts with the status bar (phone clock, battery):
+    # leave it out so the phone's clock is not taken for a start time
+    skip = int(0.04 * img.shape[0]) if img.shape[0] > 1.6 * img.shape[1] else 0
+    region = img[skip:top]
+    if region.shape[0] < 10:
+        return ''
     im = Image.fromarray(region).convert('L')
     if np.asarray(im).mean() < 110:
         im = ImageOps.invert(im)
     scale = 2 if img.shape[1] < 900 else 1
     if scale > 1:
         im = im.resize((im.width * scale, im.height * scale), Image.LANCZOS)
-    try:
-        text = pytesseract.image_to_string(im, config='--psm 11')
-    except Exception:
-        return None
-    return parse_date(text)
+    out = []
+    for psm in ('6', '11'):              # 6 keeps lines together, 11 finds scattered words
+        try:
+            out.append(pytesseract.image_to_string(im, config=f'--psm {psm}'))
+        except Exception:
+            pass
+    return '\n'.join(out)
+
+
+def read_date(img: np.ndarray, layout: Layout):
+    """The cook date if the screenshot shows one above the chart (e.g. 'Jun 21, 2026')."""
+    return read_start(img, layout)[0]
+
+
+def read_start(img: np.ndarray, layout: Layout):
+    """(date, start time) shown above the chart; either can be None."""
+    if layout.plot is None or not available():
+        return None, None
+    text = _text_above_chart(img, layout)
+    return parse_date(text), parse_start_time(text)

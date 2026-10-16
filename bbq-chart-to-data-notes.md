@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 8 October 2026 for v1.4.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
+Last updated 16 October 2026 for v1.5.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud; files are uploaded to GitHub manually through the web interface.
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -14,6 +14,12 @@ Phone probe app: legend dots "Internal" (red #fa3a37), "Target" (purple #dd55fd)
 
 ## v1.1.1 (feedback 7 Oct 2026 on v1.1.0)
 The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shading under the meat line translucently over the ambient line, so inside it the ambient line is #a49ee7 instead of #9ba5fa (confirmed from the user's screenshot). v1.1.0 saw two colours, and the "best-matching colour wins" rule gave the tinted pixels to the second colour. Fix: _merge_shades in colour_candidates joins colours that are close (< 60 RGB) and either occupy different columns (overlap < 35 %) or, where both appear, the second lies within the first's vertical extent in > 70 % of shared columns (pixels on a third line ignored). The merged candidate keeps `variants`; trace_line/coverage_map take `shades` (a pixel counts if it fits any shade; competition only against other lines). The replica now draws its shading translucently over the ambient line (alpha 0.16 → 0.03) to reproduce this.
+
+## v1.5.0 (16 Oct 2026)
+- Title ":material/dashboard: BBQ Chart to Data" (logo first).
+- Dark mode switch next to the title (theme_switch). Streamlit cannot change the theme from Python; the switch clicks Streamlit's own ⋮ menu items (stMainMenuItem-theme-Dark/Light), then the menu's Rerun so the HTML table follows. No page reload, so the uploaded screenshot stays. The switch follows st.context.theme when the theme is changed in the menu.
+- Start time: chart_text.read_start / parse_start_time read a time on the date's line ('Jun 21, 2026 18:05', '21.06.2026, 6:05 PM') or after a start word ('Start: 18:05', 'Started 6:05 PM', 'Startzeit 07:30'). Status bar of full phone screenshots (top 4 %) is skipped so the phone clock is not taken. The user's app (21 June screenshot) shows only the date and the cooking time, so the start time still has to be set there.
+- Export: "Columns to export" pills (Timestamp, Ambient, Meat, Filled when gaps were filled); the old Filled checkbox is now one of the pills.
 
 ## v1.4.0 (8 Oct 2026)
 - Title "BBQ Chart to :material/dashboard: Data"; page icon :material/dashboard:.
@@ -62,7 +68,7 @@ Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180�
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (20 tests) and test_chart_text.py (17 tests; skipped without Tesseract).
+- test_digitizer.py (20 tests) and test_chart_text.py (19 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.

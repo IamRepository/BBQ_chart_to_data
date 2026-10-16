@@ -13,14 +13,14 @@ Timestamps are day/month/year. The CSV imports straight into the Cook Profile Da
 1. **Screenshot**: upload the original screenshot from your phone (PNG is best). Or try one of the examples.
 2. **Temperature axis**: the app reads the labels on the temperature axis (for example 0°, 24°, … 143°) and fits one straight scale through all of them. Labels it cannot read are left out. You can switch to *Two reference lines* and type values yourself.
 3. **Time axis**: the app reads the time labels.
-   - Elapsed hours (4h, 8h, …): give the **start date and start time** of the cook (the time at 0 h). If the screenshot shows the date (for example "Jun 21, 2026"), the start date is filled in for you.
+   - Elapsed hours (4h, 8h, …): give the **start date and start time** of the cook (the time at 0 h). If the screenshot shows the date (for example "Jun 21, 2026") or the start time ("Jun 21, 2026 18:05", "Start: 18:05"), they are filled in for you.
    - Clock times (18:00, 20:00, …): give the date of the first label; charts that run past midnight are handled.
    - Or switch to *Two reference points* and give the date and time at two places on the axis.
 4. **Lines**: the legend words decide which colour is which (Internal/Meat/Probe → meat, Ambient/Pit/Grill/Smoker → ambient). A flat line, such as a target or setpoint, is never used. Without a legend, ambient is the line that is hotter at the start of the cook. You can change either line, or pick *Custom colour*.
 5. **Data**: check that the thin traced lines sit on the curves in the screenshot and choose the time step between rows (every minute by default). Where the app recorded nothing (a gap, often drawn dotted), *Join gaps with straight lines* fills the values on a straight line across the gap; filled stretches are dotted in the chart.
-6. **Export**: the file name starts as the screenshot's name; change it if you like and press *Download CSV*. In Chrome and Edge the browser asks where to save the file; other browsers save to the Downloads folder unless "Ask where to save each file" is on in their settings. Optionally add a column marking the filled values.
+6. **Export**: the file name starts as the screenshot's name; change it if you like and press *Download CSV*. In Chrome and Edge the browser asks where to save the file; other browsers save to the Downloads folder unless "Ask where to save each file" is on in their settings. Choose which columns go into the file (Timestamp, Ambient, Meat, and Filled, which marks values filled across gaps).
 
-Hover over the screenshot to read pixel positions; drag to zoom in. *Search area and tracing settings* has the box the lines are searched in, the colour tolerance, gap bridging, a top-edge option for charts with a filled area under the line, and optional smoothing.
+The *Dark mode* switch next to the title changes the look (the same choice is in the ⋮ menu). Hover over the screenshot to read pixel positions; drag to zoom in. *Search area and tracing settings* has the box the lines are searched in, the colour tolerance, gap bridging, a top-edge option for charts with a filled area under the line, and optional smoothing.
 
 ## How it reads the chart
 

@@ -140,6 +140,15 @@ class ProbeAppChart(unittest.TestCase):
 
     def test_no_date_on_replica(self):
         self.assertIsNone(ct.read_date(self.img, self.lay))
+        self.assertEqual(ct.read_start(self.img, self.lay), (None, None))
+
+    def test_start_date_and_time_read_when_shown(self):
+        from datetime import date, time
+        for title, expected in (('Jun 21, 2026 18:05', (date(2026, 6, 21), time(18, 5))),
+                                ('Start time 6:05 PM', (None, time(18, 5)))):
+            for size in ((1080, 1350), (582, 730)):
+                img = np.asarray(make_probe_example(*size, title=title).image)
+                self.assertEqual(ct.read_start(img, dg.detect_layout(img)), expected, (title, size))
 
     def test_table_jpeg(self):
         self.check_table(jpeg(self.ex.image))
@@ -197,6 +206,14 @@ class Parsing(unittest.TestCase):
         for text in ('Jun 21, 2026', '21 June 2026', '21.06.2026', '21/06/2026', '2026-06-21', 'Sun, Jun 21, 2026'):
             self.assertEqual(ct.parse_date(text), date(2026, 6, 21), text)
         self.assertIsNone(ct.parse_date('23:39  57%'))
+
+    def test_start_times(self):
+        from datetime import time
+        for text in ('Jun 21, 2026 18:05', '21.06.2026, 6:05 PM', 'Jun 21, 2026 at 6:05 pm', 'Start: 18:05',
+                     'Started 6:05 PM', 'Start time 18:05'):
+            self.assertEqual(ct.parse_start_time(text), time(18, 5), text)
+        for text in ('Jun 21, 2026', 'Cooking Time 22hr 44min', '23:39 57%', 'Target 100°C', 'Elapsed 22hr44min'):
+            self.assertIsNone(ct.parse_start_time(text), text)
         self.assertIsNone(ct.parse_date('Target Temp 100°C'))
 
     def test_time_values(self):

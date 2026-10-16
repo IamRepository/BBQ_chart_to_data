@@ -173,14 +173,15 @@ def _dashed_v(d, x, y0, y1, fill, width, dash, gap):
         y += dash + gap
 
 
-def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3, gap=None) -> ProbeChart:
+def make_probe_example(width: int = 1080, height: int = 1350, scale: int = 3, gap=None,
+                       title: str = '92.4°C') -> ProbeChart:
     """gap: (start h, end h) with no recorded data; the app joins it with grey dotted lines."""
     W, H = width * scale, height * scale
     u = width / 582 * scale                     # layout unit: 1 = one pixel of a 582 px wide screen
     im = Image.new('RGB', (W, H), (255, 255, 255))
     d = ImageDraw.Draw(im)
     grey_text, grid = (40, 40, 40), (205, 205, 205)
-    d.text((92 * u, 10 * u), '92.4°C', fill=(10, 10, 10), font=_font(int(20 * u)))
+    d.text((92 * u, 10 * u), title, fill=(10, 10, 10), font=_font(int(20 * u)))
     d.line([(92 * u, 65 * u), (487 * u, 65 * u)], fill=(238, 238, 238), width=max(1, int(u)))
     d.text((92 * u, 96 * u), 'Chart', fill=grey_text, font=_font(int(15 * u)))
     f = _font(int(11 * u))

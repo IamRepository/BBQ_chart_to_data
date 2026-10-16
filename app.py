@@ -76,9 +76,9 @@ def analyse_image(data: bytes):
 
 @st.cache_data(show_spinner=False, max_entries=8)
 def read_text(digest: str, _img, _layout):
-    """Axis labels, legend and the cook date (slowest step: a few seconds)."""
+    """Axis labels, legend, cook date and start time (slowest step: a few seconds)."""
     return (ct.read_temperature_axis(_img, _layout), ct.read_time_axis(_img, _layout),
-            ct.read_legend(_img, _layout), ct.read_date(_img, _layout))
+            ct.read_legend(_img, _layout), ct.read_start(_img, _layout))
 
 
 @st.cache_data(show_spinner=False, max_entries=4)
@@ -269,6 +269,52 @@ def save_button(data: bytes, file_name: str) -> str:
 </script>"""
 
 
+def theme_switch():
+    """'Dark mode' switch. Streamlit has no command to change the theme from the app, so the
+    switch uses the Light/Dark items of Streamlit's own ⋮ menu in the browser: the theme
+    changes at once and nothing on the page is lost."""
+    is_dark = getattr(getattr(st.context, 'theme', None), 'type', 'light') == 'dark'
+    if st.session_state.get('theme_request') is None:
+        st.session_state.dark_mode = is_dark          # follow the menu if the theme was changed there
+
+    def requested():
+        st.session_state.theme_request = 'Dark' if st.session_state.dark_mode else 'Light'
+        st.session_state.theme_nonce = st.session_state.get('theme_nonce', 0) + 1
+
+    st.toggle(':material/dark_mode: Dark mode', key='dark_mode', on_change=requested,
+              help='Switches between the light and the dark look. The same choice is in the ⋮ menu at the '
+                   'top right, which also has "System" to follow your computer\'s setting.')
+    want = st.session_state.get('theme_request')
+    if want:
+        nonce = st.session_state.theme_nonce
+        st.html(f"""<script>
+(async () => {{
+  if (window.__bcdTheme === {nonce}) return;
+  window.__bcdTheme = {nonce};
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const item = () => document.querySelector('[data-testid="stMainMenuItem-theme-{want}"]');
+  for (let i = 0; i < 20 && !item(); i++) {{
+    const btn = document.querySelector('[data-testid="stMainMenuButton"]');
+    if (btn && i % 5 === 0) btn.click();
+    await sleep(100);
+  }}
+  if (!item()) return;
+  item().click();
+  // rerun once so the parts drawn by the app (table colours) follow the new theme
+  await sleep(400);
+  const rerun = () => document.querySelector('[data-testid="stMainMenuItem-rerun"]');
+  for (let i = 0; i < 20 && !rerun(); i++) {{
+    const btn = document.querySelector('[data-testid="stMainMenuButton"]');
+    if (btn && i % 5 === 0) btn.click();
+    await sleep(100);
+  }}
+  if (rerun()) rerun().click();
+}})();
+</script>""", unsafe_allow_javascript=True)
+        if (want == 'Dark') == is_dark:
+            st.session_state.theme_request = None      # done: the theme now matches
+
+
 def fmt_list(values: list, limit: int = 8) -> str:
     if len(values) <= limit:
         return ', '.join(values)
@@ -305,7 +351,10 @@ def overlay_figure(data: bytes, img, area, y_refs, x_refs, traces, colours) -> g
 
 # --------------------------------------------------------------------------- page
 
-st.title('BBQ Chart to :material/dashboard: Data')
+title_col, theme_col = st.columns([5, 1], vertical_alignment='center')
+title_col.title(':material/dashboard: BBQ Chart to Data')
+with theme_col:
+    theme_switch()
 st.markdown(f'<p class="bcd-byline">Created by {AUTHOR}</p>', unsafe_allow_html=True)
 st.caption(f'Version {VERSION} · Screenshot of a temperature chart → table of ambient and meat temperatures → CSV')
 
@@ -347,13 +396,19 @@ if st.session_state.get('image_digest') != digest:
 text_ok = ct.available()
 if text_ok:
     with st.spinner('Reading the axis labels and the legend…'):
-        yfit, xfit, legend, cook_date = read_text(digest, img, layout)
+        yfit, xfit, legend, (cook_date, cook_time) = read_text(digest, img, layout)
 else:
-    yfit, xfit, legend, cook_date = ct.AxisFit(), ct.AxisFit(), [], None
-if cook_date and not st.session_state.get('date_applied'):
-    # the screenshot shows the date (e.g. 'Jun 21, 2026'): use it as the start date
-    for key in ('start_date', 'label_date', 'x1_date', 'x2_date'):
-        st.session_state[key] = cook_date
+    yfit, xfit, legend, cook_date, cook_time = ct.AxisFit(), ct.AxisFit(), [], None, None
+if (cook_date or cook_time) and not st.session_state.get('date_applied'):
+    # the screenshot shows the date (e.g. 'Jun 21, 2026') and maybe the start time: use them
+    if cook_date:
+        for key in ('start_date', 'label_date', 'x1_date', 'x2_date'):
+            st.session_state[key] = cook_date
+    if cook_time:
+        st.session_state.start_time = cook_time
+        st.session_state.x1_time = cook_time
+    if cook_date and cook_time:
+        st.session_state.start_touched = True
     st.session_state.date_applied = True
 
 bg = tuple(float(v) for v in layout.background)
@@ -443,8 +498,13 @@ with right:
         c1.date_input('Start date', key='start_date', format='DD/MM/YYYY',
                       on_change=touched, args=('start_touched',))
         time_picker('Start time (at 0 h)', 'start_time', 'start_touched', c2)
-        if cook_date:
-            st.caption(f'Start date read from the screenshot: {cook_date:%d/%m/%Y}. Set the start time.')
+        if cook_date and cook_time:
+            st.caption(f'Start date and time read from the screenshot: {cook_date:%d/%m/%Y} {cook_time:%H:%M}.')
+        elif cook_date:
+            st.caption(f'Start date read from the screenshot: {cook_date:%d/%m/%Y}. The screenshot shows no start '
+                       'time; set it here.')
+        elif cook_time:
+            st.caption(f'Start time read from the screenshot: {cook_time:%H:%M}. Set the start date.')
         t0 = datetime.combine(st.session_state.start_date, st.session_state.start_time)
         last = used[-1].value
         x1, t1, x2, t2 = zero, t0, float(xfit.pos(last)), t0 + timedelta(hours=last)
@@ -645,6 +705,8 @@ st.subheader('Step 5: Data')
 if start_needed:
     st.warning((f'Set the start time (Step 3). The date {cook_date:%d/%m/%Y} was read from the screenshot; the '
                 'time is a placeholder until you set it.' if cook_date else
+                f'Set the start date (Step 3). The start time {cook_time:%H:%M} was read from the screenshot; the '
+                'date is a placeholder until you set it.' if cook_time else
                 'Set the start date and time (Step 3); the timestamps below use a placeholder date and time.')
                if x_mode == FROM_LABELS else
                'Check the axis values and times in Steps 2 and 3; they are still at their starting values.')
@@ -726,15 +788,24 @@ if n_filled:
 
 st.divider()
 st.subheader('Step 6: Export')
-export = table
+full = table.copy()
 if filled is not None and n_filled:
-    if st.checkbox('Add a column that marks filled values', key='mark_filled',
-                   help='Adds a fourth column, "Filled", naming the lines whose value in that row was filled '
-                        'across a gap rather than read from the chart.'):
-        names = {f'{l} ({unit})': l.split()[0] for l in SERIES}
-        export = table.copy()
-        export['Filled'] = [' + '.join(names[c] for c in filled.columns[1:] if row[c])
-                            for _, row in filled.iterrows()]
+    names = {f'{l} ({unit})': l.split()[0] for l in SERIES}
+    full['Filled'] = [' + '.join(names[c] for c in filled.columns[1:] if row[c]) for _, row in filled.iterrows()]
+# lines that are not in the chart have no values: leave them out of the choice
+options = [c for c in full.columns if c in ('Timestamp', 'Filled') or full[c].notna().any()]
+default_cols = [c for c in options if c != 'Filled']
+if st.session_state.get('export_cols_options') != options:     # new image or unit: start from the default
+    st.session_state.export_cols = default_cols
+    st.session_state.export_cols_options = options
+chosen_cols = st.pills('Columns to export', options, selection_mode='multi', key='export_cols',
+                       format_func=lambda c: 'Filled (marks values filled across gaps)' if c == 'Filled' else c,
+                       help='Click a column to leave it out of the CSV, click again to put it back. '
+                            '"Filled" names the lines whose value in that row was filled across a gap '
+                            'rather than read from the chart.')
+export = full[[c for c in options if c in (chosen_cols or [])]]
+if export.empty and not len(export.columns):
+    st.warning('Choose at least one column to export.')
 # suggested name: the screenshot's file name without its extension
 if uploaded is not None:
     default_name = uploaded.name.rsplit('.', 1)[0] if '.' in uploaded.name else uploaded.name
@@ -751,9 +822,12 @@ name = ''.join(ch for ch in name.strip() if ch not in '\\/:*?"<>|') or default_n
 if not name.lower().endswith('.csv'):
     name += '.csv'
 with d2:
-    st.html(save_button(dg.to_csv_bytes(export), name), unsafe_allow_javascript=True)
-st.caption(f'{len(export)} rows from {export["Timestamp"].iloc[0]} to {export["Timestamp"].iloc[-1]}. '
-           'Timestamps are day/month/year.'
-           + (' Empty cells are gaps where the line was not visible.' if export.iloc[:, 1:3].isna().any().any() else '')
+    if len(export.columns):
+        st.html(save_button(dg.to_csv_bytes(export), name), unsafe_allow_javascript=True)
+value_cols = [c for c in export.columns if c not in ('Timestamp', 'Filled')]
+st.caption(f'{len(export.columns)} column{"s" if len(export.columns) != 1 else ""} × {len(export)} rows, '
+           f'{table["Timestamp"].iloc[0]} to {table["Timestamp"].iloc[-1]}. Timestamps are day/month/year.'
+           + (' Empty cells are gaps where the line was not visible.'
+              if value_cols and export[value_cols].isna().any().any() else '')
            + ' The browser asks where to save the file (Chrome and Edge); other browsers save to the Downloads '
              'folder unless "Ask where to save each file" is turned on in their settings.')
