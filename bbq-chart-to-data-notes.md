@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 27 October 2026 for v1.7.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
+Last updated 27 October 2026 for v1.7.1. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -21,6 +21,11 @@ The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shadin
 2. Labels are offset from their gridlines (y: ~35 px below; x: text starts ~15 px right of the gridline). The app uses the text centre, so even with labels read: top 261 / bottom 11 instead of 250 / 0, and times 21-26 min early (17:19-03:26 instead of 17:40-03:52).
 3. The 150째 gridline is missing from h_lines: the line lies on it for 3.5 h and the row is rejected as a coloured flat line.
 4. Header date read; start time not (the ' - ' between date and time is not accepted); end time 03:52 and 'Now' could also anchor the time axis.
+
+## v1.7.1 (27 Oct 2026): two kinds of Weber chart
+User's domain note: a Weber plot with FLAT, stepped lines is the Weber Smoque XL, whose cooker line is a setpoint using an averaged temperature reading; a Weber plot with a WIGGLY line is a gas BBQ or the Weber Connect probe and shows the instant temperature. (Same reason the Cook Profile Dashboard has a "setpoint" tick and the user puts a probe at grate level for the instant temperature.)
+- vendors.py: Vendor.kind {role: 'setpoint' | 'instant'}; profiles 'weber_smoque' (words smoque + weber, min 2, ambient = setpoint) and 'weber' (gas grill / Weber Connect: weber, igrill, weber connect, genesis, spirit; ambient = instant).
+- digitizer.stepped_share(trace): share of columns level with the next (|dy| < 0.3 px). Real Smoque screenshot 0.93; measured Meater lines 0.25-0.40. App: a plain "Weber" screen with stepped_share > 0.85 gets a hint to choose Weber Smoque XL. Step 5 shows an info box when the ambient values are a setpoint.
 
 ## v1.7.0 (27 Oct 2026): app profiles (vendors)
 - vendors.py: Vendor(key, name, words, min_words, lines{role: rgb}, note); VENDORS = Meater, Typhur (the user's "21 June probe app"), Weber. detect(text) counts screen words; roles_for(vendor, candidates) gives each role the nearest candidate colour (any shade) within 75 RGB.
@@ -90,7 +95,7 @@ Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180�
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (20 tests) and test_chart_text.py (34 tests; skipped without Tesseract).
+- test_digitizer.py (21 tests) and test_chart_text.py (34 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 째C (1080 px PNG), 0.15-0.19 째C (582 px), 0.08-0.13 째C (JPEG q80). Rounded labels add up to ~0.3 째C at the top of the scale. Example chart: mean 0.03 째C.

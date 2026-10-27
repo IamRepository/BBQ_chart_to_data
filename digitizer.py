@@ -418,6 +418,18 @@ def hotter_early(a: 'Trace', b: 'Trace', share: float = 0.2) -> bool:
     return bool(np.mean(a.y[first]) < np.mean(b.y[first]))       # smaller row = hotter
 
 
+def stepped_share(trace: 'Trace') -> float:
+    """Share of the line that is perfectly level from one pixel column to the next.
+
+    A set value held between changes (the Weber Smoque XL's setpoint) is level
+    almost everywhere; a measured temperature wiggles.
+    """
+    y = trace.y[~np.isnan(trace.y)]
+    if y.size < 20:
+        return 0.0
+    return float((np.abs(np.diff(y)) < 0.3).mean())
+
+
 def is_flat(trace: 'Trace', plot_height: float) -> bool:
     """A horizontal line across most of the chart: a target or setpoint, not a measurement."""
     y = trace.y[~np.isnan(trace.y)]

@@ -304,7 +304,10 @@ class MeaterStyleChart(unittest.TestCase):
 class Vendors(unittest.TestCase):
     def test_detect(self):
         self.assertEqual(vendors.detect('Cook Summary\nRate your cook\n82° Peak').key, 'meater')
-        self.assertEqual(vendors.detect('Weber Smoque XL 20 Jun 2026').key, 'weber')
+        self.assertEqual(vendors.detect('Weber Smoque XL 20 Jun 2026').key, 'weber_smoque')
+        self.assertEqual(vendors.BY_KEY['weber_smoque'].kind['ambient'], 'setpoint')
+        self.assertEqual(vendors.detect('Weber Genesis EX-335').key, 'weber')
+        self.assertEqual(vendors.BY_KEY['weber'].kind['ambient'], 'instant')
         self.assertEqual(vendors.detect('Target Temp Cooking Time\nCook Again').key, 'typhur')
         self.assertIsNone(vendors.detect('Chart 18:00 20:00'))
         self.assertIsNone(vendors.detect('Elapsed 4h'), 'one Typhur word is not enough')

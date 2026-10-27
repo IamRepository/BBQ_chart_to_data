@@ -698,6 +698,12 @@ with right:
         st.session_state.assign_note = ' '.join(notes)
     if st.session_state.get('assign_note'):
         st.caption(st.session_state.assign_note)
+    # a plain "Weber" screen whose cooker line is level between steps looks like a Smoque XL setpoint
+    if vendor and vendor.key == 'weber' and choice_v == AUTO:
+        amb = [i for i, r in vendor_role.items() if r == 'ambient']
+        if amb and dg.stepped_share(pre[amb[0]]) > 0.85:
+            st.caption('The line is level between steps, like the Weber Smoque XL\'s setpoint. If this is a Smoque, '
+                       'choose "Weber Smoque XL" under Chart app in Step 1.')
 
     picked = {}
     picked_shades = {}
@@ -758,6 +764,9 @@ if start_needed:
                 'Set the start date and time (Step 3); the timestamps below use a placeholder date and time.')
                if x_mode == FROM_LABELS else
                'Check the axis values and times in Steps 2 and 3; they are still at their starting values.')
+if vendor and vendor.kind.get('ambient') == 'setpoint' and picked.get(SERIES[0]) is not None:
+    st.info(f'The ambient values are the {vendor.name}\'s setpoint, an averaged cooker reading, not the instant '
+            'temperature. A probe at grate level gives the instant temperature.', icon=':material/info:')
 precision = (f'Lines are read to a fraction of a pixel from the anti-aliased edges, so on a clean screenshot '
              f'each value is typically within ±{max(0.3 * cal.degrees_per_px, 0.05):.1f} {unit} of the drawn line.')
 m = st.columns(4)

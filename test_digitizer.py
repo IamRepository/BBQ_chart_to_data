@@ -175,6 +175,18 @@ class GapFill(unittest.TestCase):
         self.assertTrue(np.isnan(df['Ambient temperature (°C)'][2]), 'the input table is not changed')
 
 
+class Stepped(unittest.TestCase):
+    def test_setpoint_steps_versus_measured_line(self):
+        from example_chart import make_weber_example
+        ex = make_weber_example()
+        img, lay, area, cands = run(ex)
+        tr = dg.trace_line(img, area, cands[0].rgb, lay.background)
+        self.assertGreater(dg.stepped_share(tr), 0.9, 'Smoque-style setpoint line')
+        img, lay, area, cands = run(make_example())
+        tr = dg.trace_line(img, area, pick(cands, (240, 140, 30)).rgb, lay.background)
+        self.assertLess(dg.stepped_share(tr), 0.5, 'measured, wiggly line')
+
+
 class Roles(unittest.TestCase):
     def test_ambient_is_hotter_at_the_start(self):
         from example_chart import make_probe_example, AMBIENT_RGB, INTERNAL_RGB
