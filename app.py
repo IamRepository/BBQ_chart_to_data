@@ -20,6 +20,7 @@ import streamlit as st
 
 import chart_text as ct
 import digitizer as dg
+import vendors
 from example_chart import START as EX_START, make_example, make_probe_example
 from version import AUTHOR, VERSION
 
@@ -44,7 +45,7 @@ IMAGE_KEYS = ('y_mode', 'y1_sel', 'y1_px', 'y1_val', 'y2_sel', 'y2_px', 'y2_val'
               'start_date', 'start_time', 'label_date', 'start_touched', 'manual_touched', 'date_applied',
               'amb_sel', 'amb_hex', 'meat_sel', 'meat_hex',
               'area_l', 'area_t', 'area_r', 'area_b', 'y_prefilled', 'assign_note',
-              'file_name', 'file_name_auto', 'file_name_edited')
+              'file_name', 'file_name_auto', 'file_name_edited', 'vendor_sel')
 EXAMPLES = {'probe': ('Probe app', 'A phone probe app chart with elapsed hours (4h, 8h, …) and a legend'),
             'clock': ('Clock times', 'A chart with clock times on the time axis (18:00, 20:00, …)')}
 
@@ -76,7 +77,7 @@ def analyse_image(data: bytes):
 
 @st.cache_data(show_spinner=False, max_entries=8)
 def read_text(digest: str, _img, _layout):
-    """Axis labels, legend, cook date and start time (slowest step: a few seconds)."""
+    """Axis labels, legend and the cook details around the chart (slowest step: a few seconds)."""
     return (ct.read_temperature_axis(_img, _layout), ct.read_time_axis(_img, _layout),
             ct.read_legend(_img, _layout), ct.read_header(_img, _layout))
 
@@ -359,7 +360,8 @@ st.markdown(f'<p class="bcd-byline">Created by {AUTHOR}</p>', unsafe_allow_html=
 st.caption(f'Version {VERSION} · Screenshot of a temperature chart → table of ambient and meat temperatures → CSV')
 
 st.subheader('Step 1: Screenshot')
-with st.container(border=True):
+step1 = st.container(border=True)
+with step1:
     up_col, ex_col = st.columns([3, 2], vertical_alignment='bottom', gap='medium')
     uploaded = up_col.file_uploader('Upload a screenshot of the chart', type=['png', 'jpg', 'jpeg', 'webp'],
                                     help='Use the original screenshot from your phone (PNG if possible). Cropping is '
@@ -396,9 +398,40 @@ if st.session_state.get('image_digest') != digest:
 text_ok = ct.available()
 if text_ok:
     with st.spinner('Reading the axis labels and the legend…'):
-        yfit, xfit, legend, (cook_date, cook_time, cook_end) = read_text(digest, img, layout)
+        yfit, xfit, legend, header = read_text(digest, img, layout)
 else:
-    yfit, xfit, legend, cook_date, cook_time, cook_end = ct.AxisFit(), ct.AxisFit(), [], None, None, None
+    yfit, xfit, legend, header = ct.AxisFit(), ct.AxisFit(), [], ct.Header()
+cook_date, cook_time, cook_end, cook_duration = header.date, header.start, header.end, header.duration
+
+# --- which app made the chart: recognised from the words on the screen, can be changed
+detected = vendors.detect(header.text)
+AUTO = 'Recognise automatically'
+GENERIC = 'Other app (no profile)'
+vendor_options = [AUTO] + [v.name for v in vendors.VENDORS] + [GENERIC]
+
+
+def vendor_changed():
+    for k in ('amb_sel', 'meat_sel', 'assign_note'):     # assign the lines again
+        st.session_state.pop(k, None)
+
+
+with step1:
+    v1, v2 = st.columns([3, 2], vertical_alignment='bottom', gap='medium')
+    choice_v = v2.selectbox('Chart app', vendor_options, key='vendor_sel', on_change=vendor_changed,
+                            format_func=lambda o: f'{AUTO} ({detected.name if detected else "not recognised"})'
+                            if o == AUTO else o,
+                            help='The app is recognised from the words on its screen. A known app tells which '
+                                 'line colour is ambient and which is meat. "Other app" reads the chart without '
+                                 'a profile, using its legend or, failing that, the line that is hotter at the start.')
+    vendor = detected if choice_v == AUTO else None if choice_v == GENERIC else \
+        next(v for v in vendors.VENDORS if v.name == choice_v)
+    if vendor:
+        v1.markdown(f'**Recognised: {vendor.name}**' if choice_v == AUTO else f'**Chart app: {vendor.name}**')
+        if vendor.note:
+            v1.caption(vendor.note)
+    else:
+        v1.caption('No known app recognised: the chart is read without a profile.' if choice_v == AUTO
+                   else 'Reading the chart without an app profile.')
 if (cook_date or cook_time) and not st.session_state.get('date_applied'):
     # the screenshot shows the date (e.g. 'Jun 21, 2026') and maybe the start time: use them
     if cook_date:
@@ -585,6 +618,7 @@ with right:
         elif entry.role != 'target':
             cands.append(dg.ColourCandidate(entry.rgb, 0, 0.0))
             role_of_cand[len(cands) - 1] = entry
+    vendor_role = vendors.roles_for(vendor, cands)      # {candidate: 'ambient' / 'meat' / 'target'}
     others = tuple(tuple(int(v) for v in sh) for c in cands for sh in c.shades)
     flat = {}
     medians = {}
@@ -597,6 +631,8 @@ with right:
     def cand_name(i, c):
         if i in role_of_cand:
             bits = [f'{i + 1}: “{role_of_cand[i].word}” ({dg.colour_name(c.rgb)})']
+        elif i in vendor_role:
+            bits = [f'{i + 1}: {vendor.name} {vendor_role[i]} ({dg.colour_name(c.rgb)})']
         else:
             bits = [f'{i + 1}: {dg.colour_name(c.rgb)} ({c.hex})']
         if c.variants:
@@ -608,7 +644,7 @@ with right:
     names = [cand_name(i, c) for i, c in enumerate(cands)] + [CUSTOM, NONE]
     if cands:
         chips = ''.join(f'<span class="bcd-chip"><span class="sw" style="background:{c.hex}"></span>'
-                        f'{i + 1}: {role_of_cand[i].word if i in role_of_cand else dg.colour_name(c.rgb)}'
+                        f'{i + 1}: {role_of_cand[i].word if i in role_of_cand else (vendor.name + " " + vendor_role[i]) if i in vendor_role else dg.colour_name(c.rgb)}'
                         f'{" (flat)" if flat[i] else ""}</span>' for i, c in enumerate(cands))
         st.markdown(f'<div>{chips}</div>', unsafe_allow_html=True)
     else:
@@ -617,33 +653,45 @@ with right:
     if 'amb_sel' not in st.session_state:
         chosen = {}
         notes = []
-        for key in KEYS:                                   # 1. the legend says which is which
-            for i, entry in role_of_cand.items():
-                if entry.role == ROLE_OF[key] and not flat[i]:
+        for key in KEYS:                                   # 1. the app's profile says which is which
+            for i, role in vendor_role.items():
+                if role == ROLE_OF[key]:                   # the profile knows: a flat cooker line is still ambient
                     chosen[key] = i
-        if len(chosen) == 2:
-            notes.append('Lines assigned from the legend.')
+        if chosen:
+            notes.append(f'Lines assigned from the {vendor.name} profile.')
+        else:
+            if vendor and not any(r in ('ambient', 'meat') for r in vendor_role.values()):
+                notes.append(f'The {vendor.name} line colours were not found in this chart.')
+            for key in KEYS:                               # 2. the legend says which is which
+                for i, entry in role_of_cand.items():
+                    if entry.role == ROLE_OF[key] and not flat[i]:
+                        chosen[key] = i
+            if len(chosen) == 2:
+                notes.append('Lines assigned from the legend.')
         free = [i for i in range(len(cands)) if not flat[i] and i not in chosen.values()
-                and role_of_cand.get(i, None) is None]
+                and role_of_cand.get(i, None) is None and i not in vendor_role]
         free.sort(key=lambda i: -cands[i].coverage)
         if 'amb' not in chosen and 'meat' not in chosen and len(free) >= 2:
-            a, b = free[:2]                                     # 2. ambient is hotter at the start
+            a, b = free[:2]                                     # 3. ambient is hotter at the start
             if not dg.hotter_early(pre[a], pre[b]):
                 a, b = b, a
             chosen['amb'], chosen['meat'] = a, b
             notes.append('No legend was read, so ambient is taken as the line that is hotter at the start. '
                          'Check the choice.')
-        for key in KEYS:
-            if key not in chosen and free:
-                rest = [i for i in free if i not in chosen.values()]
-                if rest:
-                    chosen[key] = rest[0]
+        if not any(r in ('ambient', 'meat') for r in vendor_role.values()):   # a profile naming one line keeps the other empty
+            for key in KEYS:
+                if key not in chosen and free:
+                    rest = [i for i in free if i not in chosen.values()]
+                    if rest:
+                        chosen[key] = rest[0]
         for key in KEYS:
             st.session_state[key + '_sel'] = names[chosen[key]] if key in chosen else NONE
-        ignored = [i for i in range(len(cands)) if flat[i] or (i in role_of_cand and role_of_cand[i].role == 'target')]
+        ignored = [i for i in range(len(cands)) if i not in chosen.values() and
+                   (flat[i] or (i in role_of_cand and role_of_cand[i].role == 'target') or vendor_role.get(i) == 'target')]
         if ignored:
             notes.append('Ignored: ' + ', '.join(
-                (f'“{role_of_cand[i].word}”' if i in role_of_cand else f'colour {i + 1}')
+                (f'“{role_of_cand[i].word}”' if i in role_of_cand else
+                 f'{vendor.name} target' if vendor_role.get(i) == 'target' else f'colour {i + 1}')
                 + (f' (flat line at {float(dg.Calibration(y1, v1, y2, v2, 0, t1, 1, t2).value(medians[i])):.0f}°)'
                    if flat[i] and np.isfinite(medians[i]) else '')
                 for i in ignored) + '.')
@@ -787,7 +835,7 @@ if n_filled:
     st.caption(f'{n_filled} rows have values filled across gaps (dotted in the chart).')
 
 # cross-check: the screenshot's own start and end times against the table's
-if cook_time or cook_end:
+if cook_time or cook_end or cook_duration:
     def _minutes_apart(a, b):
         d = abs((a.hour * 60 + a.minute) - (b.hour * 60 + b.minute)) % 1440
         return min(d, 1440 - d)
@@ -799,6 +847,11 @@ if cook_time or cook_end:
     if cook_end:
         checks.append(f'end {cook_end:%H:%M} (table {last_t:%H:%M})')
         worst = max(worst, _minutes_apart(cook_end, last_t))
+    elif cook_duration:
+        span = times[-1] - times[0]
+        fmt = lambda d: f'{int(d.total_seconds() // 3600)} h {int(d.total_seconds() % 3600 // 60):02d} min'
+        checks.append(f'duration {fmt(cook_duration)} (table {fmt(span)})')
+        worst = max(worst, abs((span - cook_duration).total_seconds()) / 60)
     step_min = max(cal.seconds_per_px / 60, (interval or 60) / 60)
     if worst <= max(5, 3 * step_min):
         st.success('Times match the screenshot: ' + ', '.join(checks) + '.', icon=':material/check_circle:')

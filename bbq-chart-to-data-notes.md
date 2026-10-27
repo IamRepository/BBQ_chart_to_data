@@ -1,6 +1,6 @@
 # BBQ Chart to Data: code notes
 
-Last updated 16 October 2026 for v1.6.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
+Last updated 27 October 2026 for v1.7.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
 
 ## Conventions
 - Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
@@ -21,6 +21,13 @@ The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shadin
 2. Labels are offset from their gridlines (y: ~35 px below; x: text starts ~15 px right of the gridline). The app uses the text centre, so even with labels read: top 261 / bottom 11 instead of 250 / 0, and times 21-26 min early (17:19-03:26 instead of 17:40-03:52).
 3. The 150° gridline is missing from h_lines: the line lies on it for 3.5 h and the row is rejected as a coloured flat line.
 4. Header date read; start time not (the ' - ' between date and time is not accepted); end time 03:52 and 'Now' could also anchor the time axis.
+
+## v1.7.0 (27 Oct 2026): app profiles (vendors)
+- vendors.py: Vendor(key, name, words, min_words, lines{role: rgb}, note); VENDORS = Meater, Typhur (the user's "21 June probe app"), Weber. detect(text) counts screen words; roles_for(vendor, candidates) gives each role the nearest candidate colour (any shade) within 75 RGB.
+- chart_text: text is read above AND below the chart (_text_below_chart: from plot bottom + max(12 % of plot height, 40 px), phone status/navigation bars skipped). read_header -> Header(date, start, end, duration, text); end = start + duration when only those are given. parse_duration: 'Total Duration 01:25:20', 'Cooking Time' with '22hr 44min' on the next line, 'Elapsed 22hr45min'. Elapsed labels shown as '22m', '1h 6m'. _label_runs keeps words of one label together ('1h 6m') only where gaps are < 1 text height and < half the typical gap.
+- app: Step 1 shows "Recognised: X" + "Chart app" select (Recognise automatically / Meater / Typhur / Weber / Other app). Line roles: profile first (a flat line named by the profile is still used), then legend, then "hotter at the start". Cross-check also compares duration with the table span (Typhur).
+- Real screenshots: 3 Meater (one cook, three probes: peaks 81.6/82.3/83.6 vs app bubbles 82/83/84; 17:03-18:28 matches Cook Started + Total Duration), Weber and Typhur all recognised with correct roles. example_chart.make_meater_example + tests.
+- Diff audit fixes before release: flat ambient line named by a profile was being dropped; a profile matching only the target colour blocked the fallback assignment; '1h 6m' merge rule could join crowded labels; note when a chosen profile's colours are not in the chart.
 
 ## v1.6.0 (16 Oct 2026): fixes from the Weber audit
 - detect_layout: if a column of labels (_label_column: dark uncoloured text beside ≥3 gridlines) sits between where the gridlines start and the first vertical line, that line (the axis) is the plot's left edge (same on the right). Rows partly hidden at one end (value bubble) join the grid if one end matches and they span ≥ 50 % (this also brings in lighter minor gridlines).
@@ -83,7 +90,7 @@ Original phone screenshot (1153 x 2576 JPEG, cook of 21 June 2026, labels 0-180�
   - is_flat: 5-95 % row range < max(2 px, 1 % of plot height).
   - build_table(anchor, not_before).
 - example_chart.py: make_example (clock times, legend inside the plot) and make_probe_example (replica of the user's app).
-- test_digitizer.py (20 tests) and test_chart_text.py (26 tests; skipped without Tesseract).
+- test_digitizer.py (20 tests) and test_chart_text.py (34 tests; skipped without Tesseract).
 
 ## Measured accuracy (v1.1.0)
 Replica of the probe app, per-minute table vs true curves, excluding minutes where the curve jumps: mean 0.07-0.12 °C (1080 px PNG), 0.15-0.19 °C (582 px), 0.08-0.13 °C (JPEG q80). Rounded labels add up to ~0.3 °C at the top of the scale. Example chart: mean 0.03 °C.

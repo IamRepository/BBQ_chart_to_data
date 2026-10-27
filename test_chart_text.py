@@ -10,7 +10,9 @@ import numpy as np
 
 import chart_text as ct
 import digitizer as dg
-from example_chart import (WEBER_END, WEBER_RGB, WEBER_START, make_weber_example, weber_temp, AMBIENT_RGB, INTERNAL_RGB, PROBE_END, PROBE_HOURS, PROBE_TARGET, PROBE_YMAX,
+import vendors
+from example_chart import (MEATER_AMBIENT_RGB, MEATER_DURATION, MEATER_MEAT_RGB, MEATER_START, make_meater_example,
+                           meater_ambient, meater_meat, WEBER_END, WEBER_RGB, WEBER_START, make_weber_example, weber_temp, AMBIENT_RGB, INTERNAL_RGB, PROBE_END, PROBE_HOURS, PROBE_TARGET, PROBE_YMAX,
                            TARGET_RGB, make_example, make_probe_example, probe_ambient, probe_internal)
 
 T0 = datetime(2026, 6, 1, 18, 0)
@@ -213,7 +215,7 @@ class WeberStyleChart(unittest.TestCase):
 
     def test_header_date_and_times(self):
         from datetime import date, time
-        self.assertEqual(ct.read_header(self.img, self.lay), (date(2026, 6, 20), time(17, 40), time(3, 52)))
+        self.assertEqual(tuple(ct.read_header(self.img, self.lay)), (date(2026, 6, 20), time(17, 40), time(3, 52)))
 
     def test_table(self):
         lay, img = self.lay, self.img
@@ -235,6 +237,85 @@ class WeberStyleChart(unittest.TestCase):
         for stamp, value in (('20/06/2026 19:00', 80), ('20/06/2026 22:00', 110), ('21/06/2026 01:00', 150),
                              ('21/06/2026 03:00', 150)):
             self.assertAlmostEqual(rows[stamp], value, delta=0.6, msg=stamp)
+
+
+@unittest.skipUnless(ct.available(), 'Tesseract is not installed')
+class MeaterStyleChart(unittest.TestCase):
+    """No legend; elapsed labels '22m' ... '1h 28m'; cook start and duration printed UNDER the chart."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.ex = make_meater_example()
+        cls.img = np.asarray(cls.ex.image)
+        cls.lay = dg.detect_layout(cls.img)
+        cls.header = ct.read_header(cls.img, cls.lay)
+
+    def test_details_under_the_chart(self):
+        from datetime import time
+        h = self.header
+        self.assertEqual((h.date, h.start, h.duration), (MEATER_START.date(), MEATER_START.time(), MEATER_DURATION))
+        self.assertEqual(h.end, time(18, 28, 20), 'end = start + duration')
+
+    def test_recognised_and_lines_assigned(self):
+        vendor = vendors.detect(self.header.text)
+        self.assertIsNotNone(vendor)
+        self.assertEqual(vendor.key, 'meater')
+        area = dg.default_search_area(self.lay, self.img.shape[1], self.img.shape[0])
+        cands = dg.colour_candidates(self.img, area)
+        roles = {r: cands[i].rgb for i, r in vendors.roles_for(vendor, cands).items()}
+        self.assertLess(dist(roles['ambient'], MEATER_AMBIENT_RGB), 40)
+        self.assertLess(dist(roles['meat'], MEATER_MEAT_RGB), 40)
+        self.assertIn('target', roles)
+
+    def test_elapsed_labels_with_two_words(self):
+        x = ct.read_time_axis(self.img, self.lay)
+        self.assertEqual([l.text for l in x.used], ['22m', '44m', '1h 6m', '1h 28m'])
+        self.assertAlmostEqual(float(x.value(self.ex.x_of_hour(0))), 0, delta=0.02)
+
+    def test_table(self):
+        img, lay = self.img, self.lay
+        y, x = ct.read_temperature_axis(img, lay), ct.read_time_axis(img, lay)
+        self.assertAlmostEqual(float(y.value(self.ex.y_of_temp(240))), 240, delta=0.6)
+        area = dg.default_search_area(lay, img.shape[1], img.shape[0])
+        cands = dg.colour_candidates(img, area)
+        roles = {r: i for i, r in vendors.roles_for(vendors.BY_KEY['meater'], cands).items()}
+        others = [sh for c in cands for sh in c.shades]
+        t0 = MEATER_START
+        last = x.used[-1].value
+        cal = dg.Calibration(y.used[0].pos, float(y.value(y.used[0].pos)), y.used[-1].pos, float(y.value(y.used[-1].pos)),
+                             float(x.pos(0)), t0, float(x.pos(last)), t0 + timedelta(hours=last))
+        series = {}
+        for role, label in (('ambient', 'Ambient temperature'), ('meat', 'Meat temperature')):
+            c = cands[roles[role]]
+            series[label] = dg.series_in_units(dg.trace_line(img, area, c.rgb, lay.background, others=others,
+                                                             shades=c.variants), cal)
+        df = dg.build_table(series, cal, 60, anchor=t0, not_before=t0)
+        self.assertEqual(df['Timestamp'].iloc[0], '22/11/2025 17:03')
+        last_t = datetime.strptime(df['Timestamp'].iloc[-1], dg.TIME_FORMAT)
+        self.assertLess(abs((last_t - (MEATER_START + MEATER_DURATION)).total_seconds()), 180)
+        h = np.arange(len(df)) / 60
+        for col, fn in (('Ambient temperature (°C)', meater_ambient), ('Meat temperature (°C)', meater_meat)):
+            v = df[col].to_numpy()
+            calm = ~np.isnan(v) & (h > 0.05) & (h < 1.35) & (np.abs(fn(h + 0.03) - fn(h - 0.03)) <= 8)
+            self.assertGreater(calm.sum(), 40, col)
+            self.assertLess(float(np.abs(v[calm] - fn(h[calm])).mean()), 0.8, col)
+
+
+class Vendors(unittest.TestCase):
+    def test_detect(self):
+        self.assertEqual(vendors.detect('Cook Summary\nRate your cook\n82° Peak').key, 'meater')
+        self.assertEqual(vendors.detect('Weber Smoque XL 20 Jun 2026').key, 'weber')
+        self.assertEqual(vendors.detect('Target Temp Cooking Time\nCook Again').key, 'typhur')
+        self.assertIsNone(vendors.detect('Chart 18:00 20:00'))
+        self.assertIsNone(vendors.detect('Elapsed 4h'), 'one Typhur word is not enough')
+
+    def test_roles_by_nearest_colour(self):
+        from digitizer import ColourCandidate
+        cands = [ColourCandidate((200, 12, 200), 100, .9), ColourCandidate((14, 200, 70), 100, .9),
+                 ColourCandidate((90, 160, 190), 50, .5), ColourCandidate((120, 120, 120), 10, .1)]
+        roles = vendors.roles_for(vendors.BY_KEY['meater'], cands)
+        self.assertEqual(roles, {0: 'meat', 1: 'ambient', 2: 'target'})
+        self.assertEqual(vendors.roles_for(None, cands), {})
 
 
 @unittest.skipUnless(ct.available(), 'Tesseract is not installed')
@@ -294,6 +375,26 @@ class Parsing(unittest.TestCase):
         self.assertEqual(out, [100.0, 200.0, 300.0, 400.0])
         # labels centred on their gridlines stay where they are
         self.assertEqual(ct._align([100.5, 199.6, 300.2], [20] * 3, lines), [100.0, 200.0, 300.0])
+
+    def test_label_words_joined_but_crowded_labels_kept_apart(self):
+        row = np.zeros(400, bool)
+        for a in (0, 58, 116, 174):                       # labels 8 px apart, text height 10
+            row[a:a + 50] = True
+        self.assertEqual(len(ct._label_runs(row, 10)), 4)
+        row = np.zeros(600, bool)
+        for a, b in ((0, 30), (150, 180), (300, 318), (330, 350), (470, 488), (500, 530)):
+            row[a:b] = True                               # '22m', '44m', '1h 6m', '1h 28m'
+        self.assertEqual(ct._label_runs(row, 20), [(0, 29), (150, 179), (300, 349), (470, 529)])
+
+    def test_durations(self):
+        from datetime import timedelta as td
+        self.assertEqual(ct.parse_duration('Total Duration 01:25:20'), td(hours=1, minutes=25, seconds=20))
+        self.assertEqual(ct.parse_duration('Target Temp Cooking Time\n100°C 22hr 44min'), td(hours=22, minutes=44))
+        self.assertEqual(ct.parse_duration('Elapsed 22hr45min'), td(hours=22, minutes=45))
+        self.assertIsNone(ct.parse_duration('Target 100°C Peak 85.6°C'))
+        self.assertEqual(ct._elapsed_text(0.3667), '22m')
+        self.assertEqual(ct._elapsed_text(1.1), '1h 6m')
+        self.assertEqual(ct._elapsed_text(4.0), '4h')
 
     def test_time_range(self):
         from datetime import time

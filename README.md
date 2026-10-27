@@ -10,13 +10,13 @@ Timestamps are day/month/year. The CSV imports straight into the Cook Profile Da
 
 ## How to use
 
-1. **Screenshot**: upload the original screenshot from your phone (PNG is best). Or try one of the examples.
+1. **Screenshot**: upload the original screenshot from your phone (PNG is best). Or try one of the examples. The app recognises known thermometer apps (Meater, Typhur, Weber) from the words on their screen and shows "Recognised: …"; the *Chart app* list changes it, or reads the chart without a profile.
 2. **Temperature axis**: the app reads the labels on the temperature axis (for example 0°, 24°, … 143°) and fits one straight scale through all of them. Labels it cannot read are left out. You can switch to *Two reference lines* and type values yourself.
 3. **Time axis**: the app reads the time labels.
    - Elapsed hours (4h, 8h, …): give the **start date and start time** of the cook (the time at 0 h). If the screenshot shows the date (for example "Jun 21, 2026") or the start time ("Jun 21, 2026 18:05", "Start: 18:05"), they are filled in for you.
    - Clock times (18:00, 20:00, …): give the date of the first label; charts that run past midnight are handled.
    - Or switch to *Two reference points* and give the date and time at two places on the axis.
-4. **Lines**: the legend words decide which colour is which (Internal/Meat/Probe → meat, Ambient/Pit/Grill/Smoker → ambient). A flat line, such as a target or setpoint, is never used. Without a legend, ambient is the line that is hotter at the start of the cook. You can change either line, or pick *Custom colour*.
+4. **Lines**: a recognised app's profile decides which colour is which (Meater: green ambient, magenta meat; Typhur: lavender ambient, red internal; Weber: the cooker line); otherwise the legend words decide (Internal/Meat/Probe → meat, Ambient/Pit/Grill/Smoker → ambient). A flat line, such as a target or setpoint, is never used. Without a legend, ambient is the line that is hotter at the start of the cook. You can change either line, or pick *Custom colour*.
 5. **Data**: check that the thin traced lines sit on the curves in the screenshot and choose the time step between rows (every minute by default). Where the app recorded nothing (a gap, often drawn dotted), *Join gaps with straight lines* fills the values on a straight line across the gap; filled stretches are dotted in the chart.
 6. **Export**: the file name starts as the screenshot's name; change it if you like and press *Download CSV*. In Chrome and Edge the browser asks where to save the file; other browsers save to the Downloads folder unless "Ask where to save each file" is on in their settings. Choose which columns go into the file (Timestamp, Ambient, Meat, and Filled, which marks values filled across gaps).
 
@@ -41,11 +41,16 @@ Accuracy on the test charts, per minute, against the curves they were drawn from
 - Axes must be linear. A chart with a separate scale for each line (two Y axes) is not supported yet.
 - Lines must have different colours from each other. Grey or black lines can be picked with *Custom colour*.
 
+## Adding another thermometer app
+
+Open `vendors.py`, copy one entry and change it: a few words that are always on the app's screen (lower case), how many of them must be found, and the colours of its lines (`ambient`, `meat`, `target`). Everything else (axes, dates, gaps) is read the same way for every app.
+
 ## Files
 
 - `app.py`: the Streamlit interface.
 - `digitizer.py`: gridlines, line colours, tracing, calibration and the table.
-- `chart_text.py`: reading axis labels and the legend (Tesseract).
+- `chart_text.py`: reading axis labels, the legend and the cook details above and below the chart (Tesseract).
+- `vendors.py`: known apps (Meater, Typhur, Weber): how to recognise them and their line colours.
 - `example_chart.py`: the example charts, drawn from known curves (also used by the tests).
 - `test_digitizer.py`, `test_chart_text.py`: tests. Run `python -m unittest test_digitizer test_chart_text`.
 - `version.py`, `requirements.txt` (exact versions tested), `packages.txt` (Tesseract, installed by Streamlit Cloud), `.gitignore`.

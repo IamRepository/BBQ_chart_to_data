@@ -21,7 +21,7 @@ try:
 except ImportError:            # the app still works with manual axes
     pytesseract = None
 
-from digitizer import Layout, _saturation
+from digitizer import Layout
 
 
 def available() -> bool:
@@ -179,6 +179,28 @@ def y_label_boxes(img: np.ndarray, layout: Layout, side: str = 'left') -> list:
     return boxes
 
 
+def _label_runs(cols: np.ndarray, h: int):
+    """Column ranges of the labels in one text line.
+
+    Letters are joined first (gaps under half a text height). Words of one
+    label ('1h 6m') are then joined when their gap is under one text height
+    and clearly smaller than the gaps between labels, so labels that sit close
+    together on a crowded axis stay apart.
+    """
+    pieces = _runs(cols, gap=max(2, int(0.45 * h)))
+    if len(pieces) < 3:
+        return pieces
+    gaps = [b0 - a1 - 1 for (_, a1), (b0, _) in zip(pieces[:-1], pieces[1:])]
+    typical = float(np.median(gaps))
+    out = [list(pieces[0])]
+    for (s, e), g in zip(pieces[1:], gaps):
+        if g <= h and g < 0.5 * typical:
+            out[-1][1] = e
+        else:
+            out.append([s, e])
+    return [tuple(p) for p in out]
+
+
 def x_label_boxes(img: np.ndarray, layout: Layout) -> list:
     """Label boxes in the first text line under the plot."""
     p = layout.plot
@@ -198,7 +220,7 @@ def x_label_boxes(img: np.ndarray, layout: Layout) -> list:
             break
         h = b - a + 1
         boxes = []
-        for s, e in _runs(ink[a:b + 1].any(axis=0), gap=max(2, int(0.45 * h))):
+        for s, e in _label_runs(ink[a:b + 1].any(axis=0), h):
             centre = c0 + (s + e) / 2
             if not lo_col <= centre <= hi_col:
                 continue                  # e.g. the bottom of the 0° label beside the plot
@@ -279,6 +301,15 @@ def _time_value(text: str):
     if m:
         return 'number', float(t)
     return None
+
+
+def _elapsed_text(hours: float) -> str:
+    """4.0 -> '4h', 0.3667 -> '22m', 1.1 -> '1h 6m'."""
+    total = int(round(hours * 60))
+    h, m = divmod(total, 60)
+    if h == 0:
+        return f'{m}m'
+    return f'{h}h' + (f' {m}m' if m else '')
 
 
 def _fit(candidates: list, n_labels: int, min_tol: float):
@@ -434,7 +465,7 @@ def read_time_axis(img: np.ndarray, layout: Layout) -> AxisFit:
                 m = int(round(v * 60)) % 1440
                 text = f'{m // 60:02d}:{m % 60:02d}'
             else:
-                text = f'{v:g}h'
+                text = _elapsed_text(v)
             labels.append(Label(text, pos, v, True))
         else:
             labels.append(Label(reads[0] if reads else '?', pos, float('nan'), False))
@@ -554,7 +585,7 @@ def parse_date(text: str):
 TIME_RE = r'(\d{1,2})[:.](\d{2})(?::\d{2})?\s*([AaPp])?\.?\s*[Mm]?\.?(?![\d%])'
 
 
-def _clock(m) -> 'time | None':
+def _clock(m):
     from datetime import time
     h, mi, ap = int(m.group(1)), int(m.group(2)), (m.group(3) or '').lower()
     if ap == 'p' and h < 12:
@@ -601,20 +632,40 @@ def parse_end_time(text: str):
     return None
 
 
-def _text_above_chart(img: np.ndarray, layout: Layout) -> str:
-    top = layout.plot.top
-    if top < 20:
-        return ''
-    # a full phone screenshot starts with the status bar (phone clock, battery):
-    # leave it out so the phone's clock is not taken for a start time
-    skip = int(0.04 * img.shape[0]) if img.shape[0] > 1.6 * img.shape[1] else 0
-    region = img[skip:top]
+def parse_duration(text: str):
+    """The cook's duration if the text gives one, as a timedelta, else None.
+
+    'Total Duration 01:25:20', 'Cooking Time 22hr 44min', 'Elapsed 22hr45min',
+    'Cook time 1h 25m'.
+    """
+    from datetime import timedelta
+    words = re.compile(r'(?:total\s+duration|duration|cooking\s+time|cook\s+time|elapsed|total\s+time)', re.I)
+    clock = re.compile(r'(\d{1,3}):(\d{2})(?::(\d{2}))?')
+    hours = re.compile(r'(\d{1,3})\s*h(?:rs?|ours?)?\s*(\d{1,2})\s*m(?:in)?', re.I)
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = words.search(line)
+        if not m:
+            continue
+        # the value may follow on the same line or, in two-column layouts, on the next one
+        after = (line[m.end():] + ' ' + (lines[i + 1] if i + 1 < len(lines) else ''))[:60]
+        found = [(x.start(), 'h', x) for x in hours.finditer(after)] + [(x.start(), 'c', x) for x in clock.finditer(after)]
+        if not found:
+            continue
+        _, kind, x = min(found, key=lambda f: f[0])
+        if kind == 'h':
+            return timedelta(hours=int(x.group(1)), minutes=int(x.group(2)))
+        return timedelta(hours=int(x.group(1)), minutes=int(x.group(2)), seconds=int(x.group(3) or 0))
+    return None
+
+
+def _ocr_region(region: np.ndarray, width: int) -> str:
     if region.shape[0] < 10:
         return ''
     im = Image.fromarray(region).convert('L')
     if np.asarray(im).mean() < 110:
         im = ImageOps.invert(im)
-    scale = 2 if img.shape[1] < 900 else 1
+    scale = 2 if width < 900 else 1
     if scale > 1:
         im = im.resize((im.width * scale, im.height * scale), Image.LANCZOS)
     out = []
@@ -626,19 +677,68 @@ def _text_above_chart(img: np.ndarray, layout: Layout) -> str:
     return '\n'.join(out)
 
 
+def _phone_bars(img: np.ndarray) -> int:
+    """Height of the phone's status bar / navigation bar on a full phone screenshot."""
+    return int(0.04 * img.shape[0]) if img.shape[0] > 1.6 * img.shape[1] else 0
+
+
+def _text_above_chart(img: np.ndarray, layout: Layout) -> str:
+    # the status bar (phone clock, battery) is left out so the phone's clock
+    # is not taken for a start time
+    return _ocr_region(img[_phone_bars(img):layout.plot.top], img.shape[1]) if layout.plot.top >= 20 else ''
+
+
+def _text_below_chart(img: np.ndarray, layout: Layout) -> str:
+    """Text under the chart (below the time labels), where some apps show the cook details."""
+    ph = layout.plot.bottom - layout.plot.top
+    start = int(layout.plot.bottom + max(0.12 * ph, 40))
+    end = img.shape[0] - _phone_bars(img)
+    return _ocr_region(img[start:end], img.shape[1]) if end - start >= 20 else ''
+
+
+@dataclass
+class Header:
+    """What the screenshot says about the cook, from the text around the chart."""
+    date: object = None          # datetime.date
+    start: object = None         # datetime.time
+    end: object = None           # datetime.time
+    duration: object = None      # datetime.timedelta
+    text: str = ''               # all text read around the chart (for recognising the app)
+
+    def __iter__(self):          # (date, start, end), as before
+        return iter((self.date, self.start, self.end))
+
+
 def read_date(img: np.ndarray, layout: Layout):
-    """The cook date if the screenshot shows one above the chart (e.g. 'Jun 21, 2026')."""
-    return read_start(img, layout)[0]
+    """The cook date if the screenshot shows one (e.g. 'Jun 21, 2026')."""
+    return read_header(img, layout).date
 
 
 def read_start(img: np.ndarray, layout: Layout):
-    """(date, start time) shown above the chart; either can be None."""
-    return read_header(img, layout)[:2]
+    """(date, start time) shown around the chart; either can be None."""
+    h = read_header(img, layout)
+    return h.date, h.start
 
 
-def read_header(img: np.ndarray, layout: Layout):
-    """(date, start time, end time) shown above the chart; any can be None."""
+def read_header(img: np.ndarray, layout: Layout) -> Header:
+    """Date, start, end and duration shown above or below the chart.
+
+    Text above the chart is preferred; text below it fills what is missing
+    (Meater shows 'Cook Started 22 Nov 2025 17:03' and 'Total Duration
+    01:25:20' under the chart). An end time is worked out from start +
+    duration when only those are given.
+    """
     if layout.plot is None or not available():
-        return None, None, None
-    text = _text_above_chart(img, layout)
-    return parse_date(text), parse_start_time(text), parse_end_time(text)
+        return Header()
+    above = _text_above_chart(img, layout)
+    below = _text_below_chart(img, layout)
+    h = Header(text=above + '\n' + below)
+    for text in (above, below):
+        h.date = h.date or parse_date(text)
+        h.start = h.start or parse_start_time(text)
+        h.end = h.end or parse_end_time(text)
+        h.duration = h.duration or parse_duration(text)
+    if h.end is None and h.start is not None and h.duration is not None:
+        from datetime import datetime
+        h.end = (datetime.combine(datetime(2000, 1, 1), h.start) + h.duration).time()
+    return h

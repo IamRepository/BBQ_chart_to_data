@@ -332,3 +332,97 @@ def make_weber_example(width: int = 1920, height: int = 1080, scale: int = 2) ->
 
     small = im.resize((width, height), Image.LANCZOS)
     return WeberChart(small, lambda h: (xh(h) / k), lambda v: yv(v) / k)
+
+
+# --------------------------------------------------------------------------- Meater-style replica
+# Portrait phone screen: "Cook Summary" title, peak/target bubbles, labels
+# 10° ... 240° on dashed gridlines, elapsed labels 22m ... 1h 28m, green
+# ambient, magenta meat, a dotted blue target line, and the cook details
+# (start, duration) UNDER the chart.
+
+MEATER_START = datetime(2025, 11, 22, 17, 3)
+MEATER_DURATION = timedelta(hours=1, minutes=25, seconds=20)
+MEATER_AMBIENT_RGB = (15, 205, 69)
+MEATER_MEAT_RGB = (201, 11, 201)
+MEATER_TARGET_RGB = (84, 166, 193)
+
+
+def meater_ambient(h):
+    h = np.asarray(h, float)
+    v = 50 + 120 * (1 - np.exp(-h / 0.12))
+    v = v + np.clip(h - 0.8, 0, None) * 120
+    v = np.where((h > 1.2) & (h < 1.28), v - 60, v)
+    return np.where(h > 1.38, v - 600 * (h - 1.38), v)
+
+
+def meater_meat(h):
+    return 10 + 70 * (np.asarray(h, float) / 1.42) ** 1.15
+
+
+@dataclass
+class MeaterChart:
+    image: Image.Image
+    x_of_hour: object
+    y_of_temp: object
+
+
+def make_meater_example(width: int = 1080, height: int = 2400, scale: int = 2) -> MeaterChart:
+    W, H = width * scale, height * scale
+    k = width / 895 * scale
+    im = Image.new('RGB', (W, H), (252, 252, 252))
+    d = ImageDraw.Draw(im)
+    d.text((150 * k, 50 * k), '17:12', fill=(20, 20, 20), font=_font(int(22 * k)), anchor='lm')
+    d.text((790 * k, 50 * k), '73%', fill=(20, 20, 20), font=_font(int(22 * k)), anchor='lm')
+    d.text((32 * k, 135 * k), 'Cook Summary', fill=(10, 10, 10), font=_font(int(30 * k)), anchor='lm')
+    d.text((135 * k, 233 * k), 'Rate your cook', fill=(20, 20, 20), font=_font(int(21 * k)), anchor='lm')
+    for x, col, txt, lab in ((708, MEATER_MEAT_RGB, '82°', 'Peak'), (833, (40, 170, 230), '80°', 'Target')):
+        d.ellipse([(x - 45) * k, 205 * k, (x + 45) * k, 295 * k], fill=col)
+        d.text((x * k, 250 * k), txt, fill=(255, 255, 255), font=_font(int(30 * k)), anchor='mm')
+        d.text((x * k, 313 * k), lab, fill=(20, 20, 20), font=_font(int(17 * k)), anchor='mm')
+    pl, pr, pt, pb = 100, 815, 368, 1165
+    vmin, vmax = 10, 240
+    yv = lambda v: (pb - (pb - pt) * (np.asarray(v, float) - vmin) / (vmax - vmin)) * k
+    xh = lambda h: (pl + np.asarray(h, float) / (88 / 60) * (pr - pl)) * k      # right edge = 1 h 28 min
+    grid = (228, 228, 228)
+    for i in range(6):
+        v = vmin + i * 46
+        y = yv(v)
+        x = pl * k
+        while x < pr * k:
+            d.line([(x, y), (min(x + 6 * k, pr * k), y)], fill=grid, width=max(1, int(k)))
+            x += 11 * k
+        d.text(((pl - 10) * k, y), f'{v}°', fill=(40, 40, 40), font=_font(int(21 * k)), anchor='rm')
+    for i in range(1, 9):
+        x = xh(i * 11 / 60)
+        y = pt * k
+        while y < pb * k:
+            d.line([(x, y), (x, min(y + 6 * k, pb * k))], fill=grid, width=max(1, int(k)))
+            y += 11 * k
+    for i, lab in ((2, '22m'), (4, '44m'), (6, '1h 6m'), (8, '1h 28m')):
+        d.text((xh(i * 11 / 60), 1195 * k), lab, fill=(30, 30, 30), font=_font(int(21 * k)), anchor='mm')
+    d.line([(pl * k, pt * k), (pl * k, pb * k), (pr * k, pb * k)], fill=(205, 205, 205), width=int(1.5 * k))
+    end_h = MEATER_DURATION.total_seconds() / 3600
+    hrs = np.linspace(0, end_h, 3000)
+    lw = int(3.5 * k)
+    yt = yv(80)
+    x = pl * k
+    while x < pr * k:
+        d.line([(x, yt), (x + 5 * k, yt)], fill=MEATER_TARGET_RGB, width=int(1.5 * k))
+        x += 9 * k
+    d.polygon([(pl * k, yt - 9 * k), (pl * k, yt + 9 * k), ((pl + 16) * k, yt)], fill=(40, 170, 230))
+    d.line(list(zip(xh(hrs), yv(meater_ambient(hrs)))), fill=MEATER_AMBIENT_RGB, width=lw, joint='curve')
+    d.line(list(zip(xh(hrs), yv(meater_meat(hrs)))), fill=MEATER_MEAT_RGB, width=lw, joint='curve')
+    ex, ey = xh(end_h), yv(meater_meat(end_h))
+    d.polygon([(ex - 10 * k, ey - 22 * k), (ex + 10 * k, ey - 22 * k), (ex, ey - 4 * k)], fill=MEATER_MEAT_RGB)
+    d.rectangle([20 * k, 1245 * k, 449 * k, 1325 * k], fill=(205, 15, 45))
+    d.text((233 * k, 1287 * k), 'DETAILS', fill=(255, 255, 255), font=_font(int(22 * k)), anchor='mm')
+    d.rectangle([449 * k, 1245 * k, 875 * k, 1325 * k], outline=(205, 15, 45), width=int(2 * k))
+    d.text((662 * k, 1287 * k), 'NOTES', fill=(205, 15, 45), font=_font(int(22 * k)), anchor='mm')
+    d.text((105 * k, 1380 * k), 'Whole Chicken', fill=(20, 20, 20), font=_font(int(23 * k)), anchor='lm')
+    d.text((24 * k, 1585 * k), 'Cook Started', fill=(20, 20, 20), font=_font(int(27 * k)), anchor='lm')
+    d.text((860 * k, 1585 * k), '22 Nov 2025 17:03', fill=(20, 20, 20), font=_font(int(23 * k)), anchor='rm')
+    d.line([(0, 1622 * k), (W, 1622 * k)], fill=(225, 225, 225), width=int(2 * k))
+    d.text((24 * k, 1667 * k), 'Total Duration', fill=(20, 20, 20), font=_font(int(27 * k)), anchor='lm')
+    d.text((870 * k, 1667 * k), '01:25:20', fill=(20, 20, 20), font=_font(int(27 * k)), anchor='rm')
+    small = im.resize((width, height), Image.LANCZOS)
+    return MeaterChart(small, lambda h: xh(h) / scale, lambda v: yv(v) / scale)
