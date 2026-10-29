@@ -1,4 +1,6 @@
-# BBQ Chart to Data
+# Chart-2-Data
+
+(Formerly *BBQ Chart to Data*; the GitHub repository keeps its name `BBQ_chart_to_data` so the live app's address does not change.)
 
 Turn a screenshot of a temperature chart (from a probe or smoker app) into a table with three columns, and download it as CSV:
 

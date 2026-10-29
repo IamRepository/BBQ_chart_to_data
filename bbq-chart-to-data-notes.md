@@ -1,9 +1,9 @@
-# BBQ Chart to Data: code notes
+# Chart-2-Data (formerly BBQ Chart to Data): code notes
 
-Last updated 27 October 2026 for v1.7.1. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
+Last updated 29 October 2026 for v1.7.2. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
 
 ## Conventions
-- Release zip: "BBQ Chart to Data vX.Y.Z.zip", inner folder named the same.
+- Release zip (when one is made): "Chart-2-Data vX.Y.Z.zip", inner folder named the same (before v1.7.2: "BBQ Chart to Data vX.Y.Z.zip").
 - Every release zip includes this file, updated for that release.
 - Keep files at the top level (subfolders did not survive manual upload in the other projects).
 - After uploading a release that changes more than app.py, reboot the app (Manage app, ⋮, Reboot app). A release that adds packages.txt needs the reboot so Tesseract gets installed.
@@ -21,6 +21,9 @@ The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shadin
 2. Labels are offset from their gridlines (y: ~35 px below; x: text starts ~15 px right of the gridline). The app uses the text centre, so even with labels read: top 261 / bottom 11 instead of 250 / 0, and times 21-26 min early (17:19-03:26 instead of 17:40-03:52).
 3. The 150° gridline is missing from h_lines: the line lies on it for 3.5 h and the row is rejected as a coloured flat line.
 4. Header date read; start time not (the ' - ' between date and time is not accepted); end time 03:52 and 'Now' could also anchor the time axis.
+
+## v1.7.2 (29 Oct 2026): new name
+- App renamed "Chart-2-Data" (APP_NAME; title ":material/dashboard: Chart-2-Data", logo kept; browser tab title). Repository name BBQ_chart_to_data and the Streamlit app address unchanged.
 
 ## v1.7.1 (27 Oct 2026): two kinds of Weber chart
 User's domain note: a Weber plot with FLAT, stepped lines is the Weber Smoque XL, whose cooker line is a setpoint using an averaged temperature reading; a Weber plot with a WIGGLY line is a gas BBQ or the Weber Connect probe and shows the instant temperature. (Same reason the Cook Profile Dashboard has a "setpoint" tick and the user puts a probe at grate level for the instant temperature.)

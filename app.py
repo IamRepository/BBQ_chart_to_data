@@ -1,4 +1,4 @@
-"""BBQ Chart to Data: turn a screenshot of a temperature chart into a table.
+"""Chart-2-Data: turn a screenshot of a temperature chart into a table.
 
 Steps: upload a screenshot; the app reads the axis labels and the legend;
 give the start date and time; check the traced lines on top of the
@@ -24,7 +24,7 @@ import vendors
 from example_chart import START as EX_START, make_example, make_probe_example
 from version import AUTHOR, VERSION
 
-APP_NAME = 'BBQ Chart to Data'
+APP_NAME = 'Chart-2-Data'
 SERIES = ('Ambient temperature', 'Meat temperature')
 KEYS = ('amb', 'meat')
 ROLE_OF = {'amb': 'ambient', 'meat': 'meat'}
@@ -353,7 +353,7 @@ def overlay_figure(data: bytes, img, area, y_refs, x_refs, traces, colours) -> g
 # --------------------------------------------------------------------------- page
 
 title_col, theme_col = st.columns([5, 1], vertical_alignment='center')
-title_col.title(':material/dashboard: BBQ Chart to Data')
+title_col.title(f':material/dashboard: {APP_NAME}')
 with theme_col:
     theme_switch()
 st.markdown(f'<p class="bcd-byline">Created by {AUTHOR}</p>', unsafe_allow_html=True)
