@@ -61,3 +61,7 @@ Open `vendors.py`, copy one entry and change it: a few words that are always on 
 ## Deploying on Streamlit Community Cloud
 
 New app → this repository → main file `app.py`. Under *Advanced settings* choose Python 3.12 or newer (numpy 2.5 needs it). `packages.txt` makes Streamlit Cloud install Tesseract; without it the app still works, with the axes set by hand.
+
+## Licence
+
+Copyright © 2026 Imran Abdul-Majid. All rights reserved. No licence is granted to copy, change, distribute or use this code; see [LICENSE](LICENSE).
