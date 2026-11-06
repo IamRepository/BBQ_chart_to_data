@@ -1,0 +1,3 @@
+[server]
+# screenshots are a few MB; this keeps uploads (and the memory they use) small
+maxUploadSize = 20

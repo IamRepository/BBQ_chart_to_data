@@ -28,14 +28,48 @@ from PIL import Image
 
 # --------------------------------------------------------------------------- image
 
+IMAGE_FORMATS = ('PNG', 'JPEG', 'WEBP')   # screenshots; other decoders are never used
+MAX_PIXELS = 16_000_000                  # a 4K screenshot is 8.3 M; phone screenshots ~2.6 M
+MIN_SIDE = 50
+# Pillow refuses anything far beyond the app's own limit before decoding it
+Image.MAX_IMAGE_PIXELS = 2 * MAX_PIXELS
+
+
+class ImageRejected(ValueError):
+    """The upload is not an image the app will read; the message says why, for the user."""
+
+
 def load_image(source) -> np.ndarray:
-    """Return an HxWx3 uint8 array. Accepts a path, bytes or a file-like object."""
+    """Return an HxWx3 uint8 array. Accepts a path, bytes or a file-like object.
+
+    Only PNG, JPEG and WEBP are opened (whatever the file is called), and the
+    size is checked from the header before the pixels are decoded, so a small
+    file cannot unpack into an image that fills the server's memory.
+    """
     if isinstance(source, (bytes, bytearray)):
         source = io.BytesIO(source)
-    im = Image.open(source)
+    try:
+        im = Image.open(source, formats=list(IMAGE_FORMATS))
+    except Image.DecompressionBombError:
+        raise ImageRejected('The image is far too large to read.') from None
+    except Exception:
+        raise ImageRejected('This is not a PNG, JPEG or WEBP image.') from None
+    w, h = im.size
+    if w < MIN_SIDE or h < MIN_SIDE:
+        raise ImageRejected(f'The image is too small ({w} x {h} pixels). Upload the screenshot of the chart.')
+    if w * h > MAX_PIXELS:
+        raise ImageRejected(f'The image is too large ({w} x {h} pixels, {w * h / 1e6:.0f} million). '
+                            f'Screenshots up to {MAX_PIXELS // 1_000_000} million pixels are read.')
     im.load()
-    if im.mode in ('RGBA', 'LA', 'P'):
-        im = im.convert('RGBA')
+    if im.mode in ('I', 'I;16', 'I;16B', 'I;16L', 'I;16N', 'F'):
+        # 16-bit or float greyscale: bring the values into 0..255 before treating it as an 8-bit image
+        a = np.asarray(im, dtype=np.float64)
+        top = a.max() if a.size else 0
+        if top > 255:
+            a = a * (255.0 / (65535.0 if top <= 65535 else top))
+        im = Image.fromarray(np.clip(a + 0.5, 0, 255).astype(np.uint8), 'L')
+    if im.mode in ('RGBA', 'LA', 'P', 'PA', 'La', 'RGBa') or 'transparency' in im.info:
+        im = im.convert('RGBA')                       # transparent parts become white
         white = Image.new('RGBA', im.size, (255, 255, 255, 255))
         im = Image.alpha_composite(white, im)
     return np.asarray(im.convert('RGB'), dtype=np.uint8).copy()
@@ -928,13 +962,15 @@ def _resample(sec: np.ndarray, val: np.ndarray, grid: np.ndarray, max_gap_s: flo
 
 def build_table(series: dict, cal: Calibration, interval_s: float, unit: str = '°C',
                 max_gap_s: float | None = None, decimals: int = 1,
-                anchor: datetime | None = None, not_before: datetime | None = None) -> pd.DataFrame:
+                anchor: datetime | None = None, not_before: datetime | None = None,
+                max_rows: int = 200_000) -> pd.DataFrame:
     """Resample every series onto one regular clock.
 
     series: {column label: (seconds after cal.x1_time, values)}
     anchor: a time the rows line up with (the start time); rows fall on
     anchor + k * interval. Defaults to cal.x1_time.
     not_before: no rows before this time (the start of the cook).
+    max_rows: a ValueError is raised rather than building a larger table.
     """
     shift = 0.0 if anchor is None else (cal.x1_time - anchor).total_seconds()
     series = {k: (s + shift, v) for k, (s, v) in series.items()}
@@ -948,6 +984,8 @@ def build_table(series: dict, cal: Calibration, interval_s: float, unit: str = '
     last = np.floor((max(ends) + reach) / interval_s + 1e-9) * interval_s
     if not_before is not None:
         first = max(first, np.ceil((not_before - origin).total_seconds() / interval_s - 1e-9) * interval_s)
+    if (last - first) / interval_s + 1 > max_rows:
+        raise ValueError(f'more than {max_rows:,} rows: use a larger time step')
     grid = np.arange(first, last + interval_s / 2, interval_s)
     if max_gap_s is None:
         max_gap_s = max(3 * cal.seconds_per_px, 1.5 * interval_s)

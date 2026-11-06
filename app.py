@@ -12,6 +12,7 @@ import html
 import colorsys
 import hashlib
 import io
+import json
 from datetime import date, datetime, time, timedelta
 
 import numpy as np
@@ -69,13 +70,17 @@ h1{padding-top:0 !important}
 
 # --------------------------------------------------------------------------- cached work
 
-@st.cache_data(show_spinner=False, max_entries=8)
+MAX_ROWS = 50_000          # rows in the table; above this the time step or the time axis is wrong
+SHOWN_ROWS = 2_000         # rows shown on the page (the CSV has them all)
+
+
+@st.cache_data(show_spinner=False, max_entries=3)
 def analyse_image(data: bytes):
     img = dg.load_image(data)
     return img, dg.detect_layout(img)
 
 
-@st.cache_data(show_spinner=False, max_entries=8)
+@st.cache_data(show_spinner=False, max_entries=4)
 def read_text(digest: str, _img, _layout):
     """Axis labels, legend and the cook details around the chart (slowest step: a few seconds)."""
     return (ct.read_temperature_axis(_img, _layout), ct.read_time_axis(_img, _layout),
@@ -100,7 +105,7 @@ def trace(digest: str, _img, area: tuple, rgb: tuple, bg: tuple, tolerance: floa
     return dg.trace_line(_img, dg.PlotArea(*area), rgb, np.array(bg), tolerance, bridge, edge, others, shades)
 
 
-@st.cache_data(show_spinner=False, max_entries=8)
+@st.cache_data(show_spinner=False, max_entries=3)
 def png_data_uri(data: bytes) -> str:
     from PIL import Image
     buf = io.BytesIO()
@@ -216,7 +221,7 @@ def html_table(df, decimals: int = 1, height: int = 330) -> str:
     line = 'rgba(250,250,250,.12)' if dark else 'rgba(49,51,63,.12)'
     muted = 'rgba(250,250,250,.65)' if dark else 'rgba(49,51,63,.7)'
     cells = []
-    for row in df.itertuples(index=False):
+    for row in df.head(SHOWN_ROWS).itertuples(index=False):
         tds = ''.join('<td>' + ('' if isinstance(v, float) and np.isnan(v) else
                                 f'{v:.{decimals}f}' if isinstance(v, float) else html.escape(str(v))) + '</td>'
                       for v in row)
@@ -235,7 +240,7 @@ def save_button(data: bytes, file_name: str) -> str:
     """'Download CSV' that asks where to save (browser Save dialog) where the browser allows it."""
     b64 = base64.b64encode(data).decode()
     uid = hashlib.sha1(data + file_name.encode()).hexdigest()[:10]
-    name_js = file_name.replace('\\', '').replace("'", "\\'")
+    name_js = json.dumps(file_name).replace('<', '\\u003c')   # a JS string literal that cannot end the <script>
     return f"""
 <button id="bcd-save-{uid}" class="bcd-save" type="button">
   <svg width="18" height="18" viewBox="0 0 24 24" style="vertical-align:-4px;margin-right:.45rem" fill="currentColor"><path d="M12 16 7 11l1.4-1.45 2.6 2.6V4h2v8.15l2.6-2.6L17 11l-5 5Zm-6 4q-.825 0-1.412-.587Q4 18.825 4 18v-3h2v3h12v-3h2v3q0 .825-.587 1.413Q18.825 20 18 20H6Z"/></svg>Download CSV
@@ -255,14 +260,14 @@ def save_button(data: bytes, file_name: str) -> str:
     const blob = new Blob([bytes], {{type: 'text/csv'}});
     if (window.showSaveFilePicker) {{
       try {{
-        const handle = await window.showSaveFilePicker({{suggestedName: '{name_js}',
+        const handle = await window.showSaveFilePicker({{suggestedName: {name_js},
           types: [{{description: 'CSV file', accept: {{'text/csv': ['.csv']}}}}]}});
         const w = await handle.createWritable(); await w.write(blob); await w.close();
         return;
       }} catch (e) {{ if (e.name === 'AbortError') return; }}
     }}
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = '{name_js}';
+    a.href = URL.createObjectURL(blob); a.download = {name_js};
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }});
@@ -385,6 +390,9 @@ example = None if uploaded is not None else st.session_state.get('example')
 digest = hashlib.sha1(data).hexdigest()
 try:
     img, layout = analyse_image(data)
+except dg.ImageRejected as exc:   # not a screenshot the app will read
+    st.error(str(exc))
+    st.stop()
 except Exception as exc:          # unreadable file
     st.error(f'The image could not be read ({exc}).')
     st.stop()
@@ -398,7 +406,11 @@ if st.session_state.get('image_digest') != digest:
 text_ok = ct.available()
 if text_ok:
     with st.spinner('Reading the axis labels and the legend…'):
-        yfit, xfit, legend, header = read_text(digest, img, layout)
+        try:
+            yfit, xfit, legend, header = read_text(digest, img, layout)
+        except Exception:         # an odd image must not stop the app: set the axes by hand instead
+            yfit, xfit, legend, header = ct.AxisFit(), ct.AxisFit(), [], ct.Header()
+            st.warning('The text around the chart could not be read. Set the axes by hand.')
 else:
     yfit, xfit, legend, header = ct.AxisFit(), ct.AxisFit(), [], ct.Header()
 cook_date, cook_time, cook_end, cook_duration = header.date, header.start, header.end, header.duration
@@ -644,7 +656,7 @@ with right:
     names = [cand_name(i, c) for i, c in enumerate(cands)] + [CUSTOM, NONE]
     if cands:
         chips = ''.join(f'<span class="bcd-chip"><span class="sw" style="background:{c.hex}"></span>'
-                        f'{i + 1}: {role_of_cand[i].word if i in role_of_cand else (vendor.name + " " + vendor_role[i]) if i in vendor_role else dg.colour_name(c.rgb)}'
+                        f'{i + 1}: {html.escape(role_of_cand[i].word if i in role_of_cand else (vendor.name + " " + vendor_role[i]) if i in vendor_role else dg.colour_name(c.rgb))}'
                         f'{" (flat)" if flat[i] else ""}</span>' for i, c in enumerate(cands))
         st.markdown(f'<div>{chips}</div>', unsafe_allow_html=True)
     else:
@@ -798,6 +810,12 @@ for label in SERIES:
     tr = traces[label]
     series[label] = (np.array([]), np.array([])) if tr is None else dg.series_in_units(tr, cal, smoothing)
 if interval:
+    ts = [t for t, _ in series.values() if len(t)]
+    span = (max(float(np.max(t)) for t in ts) - min(float(np.min(t)) for t in ts)) if ts else 0.0
+    if span / interval > MAX_ROWS:
+        st.error(f'The table would have about {span / interval:,.0f} rows (more than {MAX_ROWS:,}). '
+                 'Choose a larger time step, or check the time axis in Step 3.')
+        st.stop()
     max_gap = max(cal.seconds_per_px * (bridge + 2), 1.5 * interval)
     table = dg.build_table(series, cal, interval, unit, max_gap_s=max_gap, anchor=anchor,
                            not_before=anchor if x_mode == FROM_LABELS and xfit.kind == 'elapsed' else None)
@@ -840,6 +858,8 @@ chart.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10), hovermode='
 st.plotly_chart(chart, width='stretch', config={'displaylogo': False})
 
 st.html(html_table(table, 1 if interval else 2))
+if len(table) > SHOWN_ROWS:
+    st.caption(f'The first {SHOWN_ROWS:,} of {len(table):,} rows are shown. The CSV has them all.')
 if n_filled:
     st.caption(f'{n_filled} rows have values filled across gaps (dotted in the chart).')
 
@@ -891,6 +911,7 @@ if export.empty and not len(export.columns):
 # suggested name: the screenshot's file name without its extension
 if uploaded is not None:
     default_name = uploaded.name.rsplit('.', 1)[0] if '.' in uploaded.name else uploaded.name
+    default_name = ''.join(ch for ch in default_name if ch not in '\\/:*?"<>|' and ch.isprintable()) or 'chart'
 else:
     default_name = f'{EXAMPLES[example][0].lower().replace(" ", "_")}_example'
 d1, d2 = st.columns([3, 1], vertical_alignment='bottom')
@@ -900,7 +921,7 @@ if st.session_state.get('file_name_auto') != default_name and not st.session_sta
     st.session_state.file_name_auto = default_name
 name = d1.text_input('File name', key='file_name', on_change=touched, args=('file_name_edited',),
                      help='Name of the CSV file to save. ".csv" is added if you leave it out.')
-name = ''.join(ch for ch in name.strip() if ch not in '\\/:*?"<>|') or default_name
+name = ''.join(ch for ch in name.strip() if ch not in '\\/:*?"<>|' and ch.isprintable()) or default_name
 if not name.lower().endswith('.csv'):
     name += '.csv'
 with d2:

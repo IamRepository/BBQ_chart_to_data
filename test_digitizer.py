@@ -253,6 +253,54 @@ class Table(unittest.TestCase):
         self.assertTrue(re.match(r'01/06/2026 18:00,\d', text.splitlines()[1]))
 
 
+def _png(im, **kw) -> bytes:
+    buf = io.BytesIO()
+    im.save(buf, 'PNG', **kw)
+    return buf.getvalue()
+
+
+class Loading(unittest.TestCase):
+    """What the app accepts as an upload, and how odd images are turned into RGB."""
+
+    def test_too_large_rejected_before_decoding(self):
+        big = _png(Image.new('L', (5000, 4000)))          # 20 M pixels, a few kB of file
+        with self.assertRaises(dg.ImageRejected):
+            dg.load_image(big)
+
+    def test_too_small_rejected(self):
+        for size in ((1, 400), (400, 10), (30, 30)):
+            with self.assertRaises(dg.ImageRejected, msg=size):
+                dg.load_image(_png(Image.new('RGB', size, 'white')))
+
+    def test_other_formats_rejected(self):
+        for fmt in ('BMP', 'GIF', 'TIFF'):
+            buf = io.BytesIO()
+            Image.new('RGB', (200, 200), 'white').save(buf, fmt)
+            with self.assertRaises(dg.ImageRejected, msg=fmt):
+                dg.load_image(buf.getvalue())
+        with self.assertRaises(dg.ImageRejected):
+            dg.load_image(b'not an image at all')
+
+    def test_16_bit_greyscale_keeps_its_picture(self):
+        grey = np.asarray(make_example().image.convert('L'), dtype=np.uint16) * 257
+        img = dg.load_image(_png(Image.fromarray(grey)))
+        self.assertEqual(img.dtype, np.uint8)
+        # the same picture as the 8-bit version (a plain convert gave an all-white image)
+        self.assertLessEqual(np.abs(img[..., 0].astype(int) - grey // 257).max(), 1)
+        self.assertIsNotNone(dg.detect_layout(img).plot)
+
+    def test_transparent_colour_becomes_white(self):
+        im = Image.new('RGB', (100, 100), (0, 0, 0))
+        img = dg.load_image(_png(im, transparency=(0, 0, 0)))
+        self.assertTrue((img == 255).all())
+
+    def test_too_many_rows_refused(self):
+        cal = dg.Calibration(0, 100, 100, 0, 0, START, 100, START + timedelta(days=30))
+        series = {'Meat': (np.array([0., 30 * 86400]), np.array([20., 90.]))}
+        with self.assertRaises(ValueError):
+            dg.build_table(series, cal, 1, max_rows=100_000)
+
+
 class Calibration(unittest.TestCase):
     def test_linear_maps_and_checks(self):
         t = datetime(2026, 6, 1, 18, 0)

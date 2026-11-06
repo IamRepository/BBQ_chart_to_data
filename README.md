@@ -42,6 +42,14 @@ Accuracy on the test charts, per minute, against the curves they were drawn from
 
 - Axes must be linear. A chart with a separate scale for each line (two Y axes) is not supported yet.
 - Lines must have different colours from each other. Grey or black lines can be picked with *Custom colour*.
+- Uploads: PNG, JPEG or WEBP, up to 20 MB and 16 million pixels (a 4K screenshot is 8.3 million).
+
+## Run locally
+
+1. Python 3.11 or later: `pip install -r requirements.txt`
+2. Tesseract OCR, which reads the axis labels and the cook details: `sudo apt install tesseract-ocr tesseract-ocr-eng` (Debian/Ubuntu), `brew install tesseract` (macOS), or the installer from the Tesseract project on Windows (add it to `PATH`). Without it the app still runs, but the axes are set by hand.
+3. `streamlit run app.py`, then open http://localhost:8501.
+4. Tests: `python -m unittest test_digitizer test_chart_text`. The tests that read text are skipped when Tesseract is not installed.
 
 ## Adding another thermometer app
 
@@ -55,7 +63,7 @@ Open `vendors.py`, copy one entry and change it: a few words that are always on 
 - `vendors.py`: known apps (Meater, Typhur, Weber): how to recognise them and their line colours.
 - `example_chart.py`: the example charts, drawn from known curves (also used by the tests).
 - `test_digitizer.py`, `test_chart_text.py`: tests. Run `python -m unittest test_digitizer test_chart_text`.
-- `version.py`, `requirements.txt` (exact versions tested), `packages.txt` (Tesseract, installed by Streamlit Cloud), `.gitignore`.
+- `version.py`, `requirements.txt` (exact versions tested), `packages.txt` (Tesseract, installed by Streamlit Cloud), `.streamlit/config.toml` (upload size limit), `.gitignore`.
 - `bbq-chart-to-data-notes.md`: development notes.
 
 ## Deploying on Streamlit Community Cloud

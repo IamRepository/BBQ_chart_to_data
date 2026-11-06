@@ -356,7 +356,7 @@ def meater_ambient(h):
 
 
 def meater_meat(h):
-    return 10 + 70 * (np.asarray(h, float) / 1.42) ** 1.15
+    return 10 + 70 * (np.clip(np.asarray(h, float), 0, None) / 1.42) ** 1.15
 
 
 @dataclass

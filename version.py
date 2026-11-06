@@ -1,2 +1,2 @@
-VERSION = '1.7.2'
+VERSION = '1.8.0'
 AUTHOR = 'Imran Abdul Majid'

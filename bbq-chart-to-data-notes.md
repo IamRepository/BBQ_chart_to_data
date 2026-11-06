@@ -1,6 +1,6 @@
 # Chart-2-Data (formerly BBQ Chart to Data): code notes
 
-Last updated 29 October 2026 for v1.7.2. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
+Last updated 6 November 2026 for v1.8.0. Repo: github.com/IamRepository/BBQ_chart_to_data (public). Streamlit app on Streamlit Community Cloud. Since v1.5.0 (16 Oct 2026) Claude has push access to the repo (granted in the session) and commits releases straight to main; before that, files were uploaded manually through the GitHub web interface (the v1.5.0 manual upload was never committed, which is why the app kept showing v1.4.0).
 
 ## Conventions
 - Release zip (when one is made): "Chart-2-Data vX.Y.Z.zip", inner folder named the same (before v1.7.2: "BBQ Chart to Data vX.Y.Z.zip").
@@ -21,6 +21,17 @@ The ambient trace stopped at the 10 h drop. Cause: the app draws its pink shadin
 2. Labels are offset from their gridlines (y: ~35 px below; x: text starts ~15 px right of the gridline). The app uses the text centre, so even with labels read: top 261 / bottom 11 instead of 250 / 0, and times 21-26 min early (17:19-03:26 instead of 17:40-03:52).
 3. The 150° gridline is missing from h_lines: the line lies on it for 3.5 h and the row is rejected as a coloured flat line.
 4. Header date read; start time not (the ' - ' between date and time is not accepted); end time 03:52 and 'Now' could also anchor the time axis.
+
+## v1.8.0 (6 Nov 2026): the eight backlog fixes (claude/chart-2-data-backlog.md)
+- Uploads: `dg.load_image` opens only PNG/JPEG/WEBP (`Image.open(formats=...)`), checks the size from the header before decoding: under 50 px a side or over 16 M pixels raises `dg.ImageRejected` (message shown as is in the app); `Image.MAX_IMAGE_PIXELS` = 32 M. `.streamlit/config.toml` sets `maxUploadSize = 20` (MB). Smaller caches for whole images (analyse_image 3, png_data_uri 3, read_text 4).
+- Dependencies: streamlit 1.66.1, pillow 13.0.0 (pip-audit clean on 6 Nov 2026).
+- 16-bit / float greyscale PNGs are scaled to 8 bit before converting (a plain convert gave an all-white picture); anything with a transparency key or alpha (incl. PA) is put on white.
+- Text reading cannot stop the app: empty regions guarded in `_ink` and `read_legend`; `read_text` failure falls back to manual axes with a warning.
+- Row cap: the app refuses tables above 50,000 rows (estimated from span / time step, before building) and shows only the first 2,000 rows on the page (the CSV has all); `build_table(max_rows=200_000)` raises ValueError as a backstop.
+- Escaping: legend words in the colour chips are HTML-escaped; the Save-button file name goes into the JS as `json.dumps` with `<` escaped; the suggested name from the upload is cleaned like a typed name (also non-printable characters).
+- README: "Run locally" section; upload limits under Limits.
+- Dead code: `_snap`, `read_date`, `read_start` removed (tests use `read_header`); `meater_meat` clips negative heights (no NaN warning); unused test import removed.
+- Tests: new `Loading` class in test_digitizer (too large, too small, other formats, 16-bit, transparency, row cap); 61 tests pass, also with RuntimeWarnings as errors. Browser check on the user's Weber Smoque, Typhur and Meater screenshots: recognised, tables built, no exceptions.
 
 ## v1.7.2 (29 Oct 2026): new name
 - App renamed "Chart-2-Data" (APP_NAME; title ":material/dashboard: Chart-2-Data", logo kept; browser tab title). Repository name BBQ_chart_to_data and the Streamlit app address unchanged.

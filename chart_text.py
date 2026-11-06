@@ -73,6 +73,8 @@ class LegendEntry:
 
 def _ink(region: np.ndarray, threshold: int = 90) -> np.ndarray:
     """Text pixels: far from the region's most common colour."""
+    if region.size == 0:
+        return np.zeros(region.shape[:2], bool)
     q = (region // 16).reshape(-1, 3).astype(np.int32)
     keys = q[:, 0] * 256 + q[:, 1] * 16 + q[:, 2]
     bg = region.reshape(-1, 3)[keys == np.bincount(keys).argmax()].mean(axis=0)
@@ -377,14 +379,6 @@ def _align(centres: list, sizes: list, lines: list) -> list:
     return out
 
 
-def _snap(pos: float, lines: list, tolerance: float) -> float:
-    """Use a gridline position when a label is centred on it (more exact than the text)."""
-    if not lines:
-        return pos
-    near = min(lines, key=lambda g: abs(g - pos))
-    return float(near) if abs(near - pos) <= tolerance else pos
-
-
 def read_temperature_axis(img: np.ndarray, layout: Layout) -> AxisFit:
     if layout.plot is None or not available():
         return AxisFit(kind='temperature')
@@ -524,6 +518,8 @@ def read_legend(img: np.ndarray, layout: Layout) -> list:
     H, W = img.shape[:2]
     r0, r1 = max(0, int(p.top - 0.6 * ph)), min(H, int(p.bottom + 0.35 * ph))
     region = img[r0:r1]
+    if region.shape[0] < 4 or region.shape[1] < 4:
+        return []
     scale = 3 if W < 900 else 2
     im = Image.fromarray(region).convert('L')
     if np.asarray(im).mean() < 110:
@@ -707,17 +703,6 @@ class Header:
 
     def __iter__(self):          # (date, start, end), as before
         return iter((self.date, self.start, self.end))
-
-
-def read_date(img: np.ndarray, layout: Layout):
-    """The cook date if the screenshot shows one (e.g. 'Jun 21, 2026')."""
-    return read_header(img, layout).date
-
-
-def read_start(img: np.ndarray, layout: Layout):
-    """(date, start time) shown around the chart; either can be None."""
-    h = read_header(img, layout)
-    return h.date, h.start
 
 
 def read_header(img: np.ndarray, layout: Layout) -> Header:

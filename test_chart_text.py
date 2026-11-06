@@ -12,7 +12,7 @@ import chart_text as ct
 import digitizer as dg
 import vendors
 from example_chart import (MEATER_AMBIENT_RGB, MEATER_DURATION, MEATER_MEAT_RGB, MEATER_START, make_meater_example,
-                           meater_ambient, meater_meat, WEBER_END, WEBER_RGB, WEBER_START, make_weber_example, weber_temp, AMBIENT_RGB, INTERNAL_RGB, PROBE_END, PROBE_HOURS, PROBE_TARGET, PROBE_YMAX,
+                           meater_ambient, meater_meat, WEBER_END, WEBER_RGB, WEBER_START, make_weber_example, AMBIENT_RGB, INTERNAL_RGB, PROBE_END, PROBE_HOURS, PROBE_TARGET, PROBE_YMAX,
                            TARGET_RGB, make_example, make_probe_example, probe_ambient, probe_internal)
 
 T0 = datetime(2026, 6, 1, 18, 0)
@@ -141,8 +141,8 @@ class ProbeAppChart(unittest.TestCase):
         self.assertGreater(df['Meat temperature (°C)'].max(), 92.4 - 0.6)
 
     def test_no_date_on_replica(self):
-        self.assertIsNone(ct.read_date(self.img, self.lay))
-        self.assertEqual(ct.read_start(self.img, self.lay), (None, None))
+        h = ct.read_header(self.img, self.lay)
+        self.assertEqual((h.date, h.start), (None, None))
 
     def test_start_date_and_time_read_when_shown(self):
         from datetime import date, time
@@ -150,7 +150,8 @@ class ProbeAppChart(unittest.TestCase):
                                 ('Start time 6:05 PM', (None, time(18, 5)))):
             for size in ((1080, 1350), (582, 730)):
                 img = np.asarray(make_probe_example(*size, title=title).image)
-                self.assertEqual(ct.read_start(img, dg.detect_layout(img)), expected, (title, size))
+                h = ct.read_header(img, dg.detect_layout(img))
+                self.assertEqual((h.date, h.start), expected, (title, size))
 
     def test_table_jpeg(self):
         self.check_table(jpeg(self.ex.image))
